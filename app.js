@@ -6,9 +6,9 @@ const currency = new Intl.NumberFormat("pt-BR", {
 });
 
 const DEFAULT_SETTINGS = {
-  companyName: "Barbara Beauty",
-  subtitle: "Salão de Beleza",
-  logoText: "B",
+  companyName: "Rayssa Oliveira",
+  subtitle: "Nail designer",
+  logoText: "R",
   logoImage: "",
   developerCredit: "Desenvolvido por Rafael Aguiar Ribeiro · Instagram @aguiar.3d",
   colors: {
@@ -209,44 +209,18 @@ function replaceState(nextState) {
 }
 
 function isFirebaseConfigured() {
-  const config = window.BARBARA_FIREBASE_CONFIG;
-  const invalidApiKeys = [
-    "AIzaSyDwH3VhiWpzYRas-QXzVxNuA0-_wW7g5sE",
-    "AIzaSyDwH3VhiWpzYRas-QXzVxNuA0-_wW7g5sE",
-    "AIzaSyDwH3VhiWpzYRas-QXzVxNuA0-_wW7g5sE",
-    "AIzaSyDwH3VhiWpzYRas-QXzVxNuA0-_wW7g5sE",
-    "" // empty string
-  ];
-
-  const invalidProjectIds = [
-    "rayssaoliveira-b9c86",
-    "rayssaoliveira-b9c86",
-    "",
-  ];
-
-  const invalidAuthDomains = [
-    "",
-  ];
-
-  const apiKey = String(config?.apiKey || "");
-  const authDomain = String(config?.authDomain || "");
-  const projectId = String(config?.projectId || "");
-
+  const config = window.RAYSSA_FIREBASE_CONFIG;
   return Boolean(
     window.firebase &&
       config &&
-      apiKey &&
-      authDomain &&
-      projectId &&
-      !invalidApiKeys.some((invalid) => apiKey.includes(invalid)) &&
-      !invalidAuthDomains.some((invalid) => authDomain.includes(invalid)) &&
-      !invalidProjectIds.some((invalid) => projectId.includes(invalid))
+      config.apiKey &&
+      config.projectId &&
+      !String(config.apiKey).startsWith("YOUR_API_KEY") &&
+      !String(config.projectId).startsWith("YOUR_PROJECT_ID")
   );
 }
 
 async function initAuth() {
-  console.log("=== initAuth iniciado ===");
-  
   if (!isFirebaseConfigured()) {
     console.info("Firebase não configurado. Autenticação desabilitada.");
     showApp();
@@ -254,7 +228,7 @@ async function initAuth() {
   }
 
   try {
-    if (!firebase.apps.length) firebase.initializeApp(window.BARBARA_FIREBASE_CONFIG);
+    if (!firebase.apps.length) firebase.initializeApp(window.RAYSSA_FIREBASE_CONFIG);
 
     if (window.location.protocol === "file:") {
       showLogin();
@@ -264,35 +238,17 @@ async function initAuth() {
       return;
     }
     
-    console.log("Fazendo signOut para limpar sessão anterior...");
-    // Primeiro, garantir que não há usuário logado e desabilitar persistência
-    try {
-      firebase.auth().setPersistence(firebase.auth.Auth.Persistence.NONE);
-    } catch (e) {
-      console.log("setPersistence não disponível, continuando...");
-    }
-    
-    await firebase.auth().signOut().catch((err) => console.log("signOut catch:", err));
-    
     // Criar conta admin padrão se não existir
-    console.log("Criando conta admin padrão...");
     await createDefaultAdminAccount();
     
-    console.log("Registrando listener onAuthStateChanged...");
     firebase.auth().onAuthStateChanged(async (user) => {
-      console.log("onAuthStateChanged disparado. User:", user?.email || "nenhum");
-      
       if (user) {
-        console.log("Usuário detectado:", user.email);
         currentUser = user;
         await loadUserPermissions(user.uid);
-        console.log("Permissões carregadas:", userPermissions);
         showApp();
         renderAll();
       } else {
-        console.log("Nenhum usuário. Mostrando tela de login.");
         currentUser = null;
-        userPermissions = {};
         showLogin();
       }
     });
@@ -308,44 +264,42 @@ async function createDefaultAdminAccount() {
     const adminPassword = "guitarra";
     const adminName = "Administrador";
 
-    // Tentar criar a conta admin
-    // Se falhar com "email-already-in-use", a conta já existe
+    // Tentar fazer login com a conta admin para verificar se ela existe
     try {
-      console.log("Tentando criar conta admin...");
-      const userCredential = await firebase.auth().createUserWithEmailAndPassword(adminEmail, adminPassword);
-      const uid = userCredential.user.uid;
-      console.log("Conta criada com uid:", uid);
+      await firebase.auth().signInWithEmailAndPassword(adminEmail, adminPassword);
+      console.log("Conta admin já existe e está ativa");
+      await firebase.auth().signOut(); // Fazer logout para permitir login normal
+      return;
+    } catch (loginError) {
+      if (loginError.code === "auth/user-not-found") {
+        console.log("Criando conta admin padrão...");
 
-      await firebase.firestore().collection("users").doc(uid).set({
-        name: adminName,
-        username: "admin",
-        email: adminEmail,
-        permissions: {
-          viewDashboard: true,
-          viewAgenda: true,
-          createClient: true,
-          editClient: true,
-          createAppointment: true,
-          editAppointment: true,
-          changeStatus: true,
-          viewFinance: true,
-          admin: true,
-        },
-        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-      });
+        const userCredential = await firebase.auth().createUserWithEmailAndPassword(adminEmail, adminPassword);
+        const uid = userCredential.user.uid;
 
-      console.log("Conta admin criada com sucesso");
-      
-      // Fazer logout imediatamente para não deixar usuário logado
-      await firebase.auth().signOut();
-      console.log("Admin deslogado");
-    } catch (createError) {
-      if (createError.code === "auth/email-already-in-use") {
-        console.log("Conta admin já existe");
-        // Não fazer login, deixar para o usuário fazer
+        await firebase.firestore().collection("users").doc(uid).set({
+          name: adminName,
+          username: "admin",
+          email: adminEmail,
+          permissions: {
+            viewDashboard: true,
+            viewAgenda: true,
+            createClient: true,
+            editClient: true,
+            createAppointment: true,
+            editAppointment: true,
+            changeStatus: true,
+            viewFinance: true,
+            admin: true,
+          },
+          createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+        });
+
+        console.log("Conta admin criada com sucesso");
+        await firebase.auth().signOut();
       } else {
-        throw createError;
+        console.log("Conta admin pode já existir:", loginError.message);
       }
     }
   } catch (error) {
@@ -356,32 +310,11 @@ async function createDefaultAdminAccount() {
 async function loadUserPermissions(uid) {
   try {
     if (!remoteDb) remoteDb = firebase.firestore();
-    
-    // Se é a conta admin padrão, dar permissões completas
-    if (currentUser?.email === "aguiar-br@hotmail.com") {
-      console.log("Admin padrão detectado, concedendo permissões totais");
-      userPermissions = {
-        viewDashboard: true,
-        viewAgenda: true,
-        createClient: true,
-        editClient: true,
-        createAppointment: true,
-        editAppointment: true,
-        changeStatus: true,
-        viewFinance: true,
-        admin: true,
-      };
-      return;
-    }
-    
-    console.log("Carregando permissões do Firestore para uid:", uid);
     const doc = await remoteDb.collection("users").doc(uid).get();
     if (doc.exists) {
-      console.log("Documento encontrado no Firestore");
       userPermissions = doc.data().permissions || {};
     } else {
-      console.log("Documento não encontrado no Firestore");
-      // Se o documento não existe, é um novo usuário - permissões vazias
+      // Se o documento não existe, é um novo usuário
       userPermissions = {};
     }
   } catch (error) {
@@ -391,32 +324,17 @@ async function loadUserPermissions(uid) {
 }
 
 function checkPermission(permission) {
-  if (!currentUser) {
-    console.log("checkPermission: sem usuário");
-    return false;
-  }
-  // Admin padrão sempre tem acesso completo
-  if (currentUser?.email === "aguiar-br@hotmail.com") {
-    console.log("checkPermission: admin padrão - TRUE");
-    return true;
-  }
-  if (userPermissions.admin) {
-    console.log("checkPermission: admin flag - TRUE");
-    return true;
-  }
-  const result = userPermissions[permission] || false;
-  console.log(`checkPermission(${permission}):`, result);
-  return result;
+  if (!currentUser) return false;
+  if (userPermissions.admin) return true;
+  return userPermissions[permission] || false;
 }
 
 function showLogin() {
-  console.log("MOSTRAR TELA DE LOGIN");
   document.querySelector("#appShell").style.display = "none";
   document.querySelector("#loginOverlay").style.display = "flex";
 }
 
 function showApp() {
-  console.log("MOSTRAR APLICATIVO");
   document.querySelector("#appShell").style.display = "grid";
   document.querySelector("#loginOverlay").style.display = "none";
 }
@@ -431,13 +349,10 @@ async function handleLogin() {
   const password = document.querySelector("#loginPassword").value;
 
   setLoginError("");
-  console.log("Tentando fazer login com identifier:", identifier);
 
   try {
     const email = await resolveLoginEmail(identifier);
-    console.log("Email resolvido para:", email);
     await firebase.auth().signInWithEmailAndPassword(email, password);
-    console.log("Login bem-sucedido!");
     document.querySelector("#loginForm").reset();
   } catch (error) {
     let errorMessage = error.message || "Erro ao fazer login";
@@ -452,7 +367,6 @@ async function handleLogin() {
       errorMessage = "Email inválido. Verifique o formato.";
     }
 
-    console.error("Erro no login:", error.code, errorMessage);
     setLoginError(errorMessage);
   }
 }
@@ -515,9 +429,9 @@ function initRemoteSync() {
   }
 
   try {
-    if (!firebase.apps.length) firebase.initializeApp(window.BARBARA_FIREBASE_CONFIG);
+    if (!firebase.apps.length) firebase.initializeApp(window.RAYSSA_FIREBASE_CONFIG);
     remoteDb = firebase.firestore();
-    remoteDocRef = remoteDb.doc(window.BARBARA_FIREBASE_DOC_PATH || "sistemas/barbarabeauty");
+    remoteDocRef = remoteDb.doc(window.RAYSSA_FIREBASE_DOC_PATH || "sistemas/rayssa-oliveira");
 
     remoteDocRef.onSnapshot(
       (snapshot) => {
@@ -930,18 +844,14 @@ function updateNavigationVisibility() {
   // Hide admin and funcionarios pages from non-admins
   const adminPages = ["admin", "funcionarios"];
   adminPages.forEach(page => {
-    const hasPermission = checkPermission("admin");
-    console.log(`Admin permission for page ${page}:`, hasPermission);
     document.querySelectorAll(`[data-page="${page}"]`).forEach(btn => {
-      btn.style.display = hasPermission ? "" : "none";
+      btn.style.display = checkPermission("admin") ? "" : "none";
     });
   });
 
   // Hide finance page from users without finance permission
-  const hasFinancePermission = checkPermission("viewFinance");
-  console.log("Finance permission:", hasFinancePermission);
   document.querySelectorAll(`[data-page="financeiro"]`).forEach(btn => {
-    btn.style.display = hasFinancePermission ? "" : "none";
+    btn.style.display = checkPermission("viewFinance") ? "" : "none";
   });
 }
 
@@ -1604,7 +1514,7 @@ function sendAppointmentWhatsapp(appointmentId) {
     `Olá, ${appointment.nomeCliente}!`,
     "",
     "Segue seu comprovante de agendamento:",
-    `Salão: BarbaraBeauty`,
+    `Nail designer: Rayssa Oliveira`,
     `Serviço: ${appointmentServiceName(appointment)}`,
     `Data: ${start.toLocaleDateString("pt-BR")}`,
     `Chegada: ${start.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })} com 15 minutos de tolerância para atraso`,
@@ -2135,7 +2045,7 @@ function exportCsv() {
 
 function exportBackup() {
   const backup = {
-    app: "BarbaraBeauty",
+    app: "Rayssa Oliveira Gestão",
     version: 1,
     exportedAt: new Date().toISOString(),
     data: {
@@ -2147,7 +2057,7 @@ function exportBackup() {
       financeiro: state.financeiro,
     },
   };
-  download(`backup-barbarabeauty-${toDateInput(new Date())}.json`, JSON.stringify(backup, null, 2), "application/json;charset=utf-8");
+  download(`backup-rayssa-oliveira-${toDateInput(new Date())}.json`, JSON.stringify(backup, null, 2), "application/json;charset=utf-8");
   toast("Backup completo exportado.");
 }
 

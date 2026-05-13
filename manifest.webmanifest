@@ -1,11 +1,11 @@
 {
-  "name": "BarbaraBeauty",
-  "short_name": "BarbaraBeauty",
-  "description": "Gestão de clientes, agenda, serviços e financeiro para BarbaraBeauty.",
-  "start_url": "/",
+  "name": "Rayssa Oliveira Gestão",
+  "short_name": "Rayssa Oliveira",
+  "description": "Gestão de clientes, agenda, serviços e financeiro para Rayssa Oliveira nail designer.",
+  "start_url": "./index.html",
   "display": "standalone",
-  "background_color": "#f5e6dc",
-  "theme_color": "#c49a6c",
+  "background_color": "#f4efe6",
+  "theme_color": "#4f7d5a",
   "orientation": "portrait-primary",
   "icons": [
     {

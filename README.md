@@ -1,6 +1,6 @@
-# BarbaraBeauty
+# Rayssa Oliveira Gestão
 
-Sistema de gestão para BarbaraBeauty, com foco em mobile, PWA e web app.
+Sistema de gestão para Rayssa Oliveira, nail designer, com foco em mobile, iPhone e web app.
 
 ## Como Abrir
 
