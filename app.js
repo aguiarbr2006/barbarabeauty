@@ -211,16 +211,16 @@ function replaceState(nextState) {
 function isFirebaseConfigured() {
   const config = window.BARBARA_FIREBASE_CONFIG;
   const invalidApiKeys = [
-    "YOUR_API_KEY",
-    "YOUR_API_KEY_AQUI",
-    "SUA_API_KEY_AQUI",
-    "SEU_API_KEY",
+    "AIzaSyDwH3VhiWpzYRas-QXzVxNuA0-_wW7g5sE",
+    "AIzaSyDwH3VhiWpzYRas-QXzVxNuA0-_wW7g5sE",
+    "AIzaSyDwH3VhiWpzYRas-QXzVxNuA0-_wW7g5sE",
+    "AIzaSyDwH3VhiWpzYRas-QXzVxNuA0-_wW7g5sE",
     "" // empty string
   ];
 
   const invalidProjectIds = [
-    "YOUR_PROJECT_ID",
-    "SEU_PROJETO",
+    "rayssaoliveira-b9c86",
+    "rayssaoliveira-b9c86",
     "",
   ];
 
@@ -245,6 +245,8 @@ function isFirebaseConfigured() {
 }
 
 async function initAuth() {
+  console.log("=== initAuth iniciado ===");
+  
   if (!isFirebaseConfigured()) {
     console.info("Firebase não configurado. Autenticação desabilitada.");
     showApp();
@@ -262,19 +264,33 @@ async function initAuth() {
       return;
     }
     
-    // Primeiro, garantir que não há usuário logado
-    await firebase.auth().signOut().catch(() => {});
+    console.log("Fazendo signOut para limpar sessão anterior...");
+    // Primeiro, garantir que não há usuário logado e desabilitar persistência
+    try {
+      firebase.auth().setPersistence(firebase.auth.Auth.Persistence.NONE);
+    } catch (e) {
+      console.log("setPersistence não disponível, continuando...");
+    }
+    
+    await firebase.auth().signOut().catch((err) => console.log("signOut catch:", err));
     
     // Criar conta admin padrão se não existir
+    console.log("Criando conta admin padrão...");
     await createDefaultAdminAccount();
     
+    console.log("Registrando listener onAuthStateChanged...");
     firebase.auth().onAuthStateChanged(async (user) => {
+      console.log("onAuthStateChanged disparado. User:", user?.email || "nenhum");
+      
       if (user) {
+        console.log("Usuário detectado:", user.email);
         currentUser = user;
         await loadUserPermissions(user.uid);
+        console.log("Permissões carregadas:", userPermissions);
         showApp();
         renderAll();
       } else {
+        console.log("Nenhum usuário. Mostrando tela de login.");
         currentUser = null;
         userPermissions = {};
         showLogin();
@@ -295,8 +311,10 @@ async function createDefaultAdminAccount() {
     // Tentar criar a conta admin
     // Se falhar com "email-already-in-use", a conta já existe
     try {
+      console.log("Tentando criar conta admin...");
       const userCredential = await firebase.auth().createUserWithEmailAndPassword(adminEmail, adminPassword);
       const uid = userCredential.user.uid;
+      console.log("Conta criada com uid:", uid);
 
       await firebase.firestore().collection("users").doc(uid).set({
         name: adminName,
@@ -321,6 +339,7 @@ async function createDefaultAdminAccount() {
       
       // Fazer logout imediatamente para não deixar usuário logado
       await firebase.auth().signOut();
+      console.log("Admin deslogado");
     } catch (createError) {
       if (createError.code === "auth/email-already-in-use") {
         console.log("Conta admin já existe");
@@ -340,6 +359,7 @@ async function loadUserPermissions(uid) {
     
     // Se é a conta admin padrão, dar permissões completas
     if (currentUser?.email === "aguiar-br@hotmail.com") {
+      console.log("Admin padrão detectado, concedendo permissões totais");
       userPermissions = {
         viewDashboard: true,
         viewAgenda: true,
@@ -354,10 +374,13 @@ async function loadUserPermissions(uid) {
       return;
     }
     
+    console.log("Carregando permissões do Firestore para uid:", uid);
     const doc = await remoteDb.collection("users").doc(uid).get();
     if (doc.exists) {
+      console.log("Documento encontrado no Firestore");
       userPermissions = doc.data().permissions || {};
     } else {
+      console.log("Documento não encontrado no Firestore");
       // Se o documento não existe, é um novo usuário - permissões vazias
       userPermissions = {};
     }
@@ -368,19 +391,32 @@ async function loadUserPermissions(uid) {
 }
 
 function checkPermission(permission) {
-  if (!currentUser) return false;
+  if (!currentUser) {
+    console.log("checkPermission: sem usuário");
+    return false;
+  }
   // Admin padrão sempre tem acesso completo
-  if (currentUser?.email === "aguiar-br@hotmail.com") return true;
-  if (userPermissions.admin) return true;
-  return userPermissions[permission] || false;
+  if (currentUser?.email === "aguiar-br@hotmail.com") {
+    console.log("checkPermission: admin padrão - TRUE");
+    return true;
+  }
+  if (userPermissions.admin) {
+    console.log("checkPermission: admin flag - TRUE");
+    return true;
+  }
+  const result = userPermissions[permission] || false;
+  console.log(`checkPermission(${permission}):`, result);
+  return result;
 }
 
 function showLogin() {
+  console.log("MOSTRAR TELA DE LOGIN");
   document.querySelector("#appShell").style.display = "none";
   document.querySelector("#loginOverlay").style.display = "flex";
 }
 
 function showApp() {
+  console.log("MOSTRAR APLICATIVO");
   document.querySelector("#appShell").style.display = "grid";
   document.querySelector("#loginOverlay").style.display = "none";
 }
@@ -395,10 +431,13 @@ async function handleLogin() {
   const password = document.querySelector("#loginPassword").value;
 
   setLoginError("");
+  console.log("Tentando fazer login com identifier:", identifier);
 
   try {
     const email = await resolveLoginEmail(identifier);
+    console.log("Email resolvido para:", email);
     await firebase.auth().signInWithEmailAndPassword(email, password);
+    console.log("Login bem-sucedido!");
     document.querySelector("#loginForm").reset();
   } catch (error) {
     let errorMessage = error.message || "Erro ao fazer login";
@@ -413,6 +452,7 @@ async function handleLogin() {
       errorMessage = "Email inválido. Verifique o formato.";
     }
 
+    console.error("Erro no login:", error.code, errorMessage);
     setLoginError(errorMessage);
   }
 }
@@ -890,14 +930,18 @@ function updateNavigationVisibility() {
   // Hide admin and funcionarios pages from non-admins
   const adminPages = ["admin", "funcionarios"];
   adminPages.forEach(page => {
+    const hasPermission = checkPermission("admin");
+    console.log(`Admin permission for page ${page}:`, hasPermission);
     document.querySelectorAll(`[data-page="${page}"]`).forEach(btn => {
-      btn.style.display = checkPermission("admin") ? "" : "none";
+      btn.style.display = hasPermission ? "" : "none";
     });
   });
 
   // Hide finance page from users without finance permission
+  const hasFinancePermission = checkPermission("viewFinance");
+  console.log("Finance permission:", hasFinancePermission);
   document.querySelectorAll(`[data-page="financeiro"]`).forEach(btn => {
-    btn.style.display = checkPermission("viewFinance") ? "" : "none";
+    btn.style.display = hasFinancePermission ? "" : "none";
   });
 }
 
