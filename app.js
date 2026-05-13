@@ -1514,7 +1514,7 @@ function sendAppointmentWhatsapp(appointmentId) {
     `Olá, ${appointment.nomeCliente}!`,
     "",
     "Segue seu comprovante de agendamento:",
-    `Nail designer: Rayssa Oliveira`,
+    `Nail designer: Barbara Beauty`,
     `Serviço: ${appointmentServiceName(appointment)}`,
     `Data: ${start.toLocaleDateString("pt-BR")}`,
     `Chegada: ${start.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })} com 15 minutos de tolerância para atraso`,
@@ -2045,7 +2045,7 @@ function exportCsv() {
 
 function exportBackup() {
   const backup = {
-    app: "Rayssa Oliveira Gestão",
+    app: "Barbara Beauty Gestão",
     version: 1,
     exportedAt: new Date().toISOString(),
     data: {
@@ -2057,7 +2057,7 @@ function exportBackup() {
       financeiro: state.financeiro,
     },
   };
-  download(`backup-rayssa-oliveira-${toDateInput(new Date())}.json`, JSON.stringify(backup, null, 2), "application/json;charset=utf-8");
+  download(`backup-Barbara-Beauty-${toDateInput(new Date())}.json`, JSON.stringify(backup, null, 2), "application/json;charset=utf-8");
   toast("Backup completo exportado.");
 }
 
