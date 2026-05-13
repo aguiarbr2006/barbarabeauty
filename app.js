@@ -262,6 +262,9 @@ async function initAuth() {
       return;
     }
     
+    // Primeiro, garantir que não há usuário logado
+    await firebase.auth().signOut().catch(() => {});
+    
     // Criar conta admin padrão se não existir
     await createDefaultAdminAccount();
     
@@ -273,6 +276,7 @@ async function initAuth() {
         renderAll();
       } else {
         currentUser = null;
+        userPermissions = {};
         showLogin();
       }
     });
@@ -288,42 +292,41 @@ async function createDefaultAdminAccount() {
     const adminPassword = "guitarra";
     const adminName = "Administrador";
 
-    // Tentar fazer login com a conta admin para verificar se ela existe
+    // Tentar criar a conta admin
+    // Se falhar com "email-already-in-use", a conta já existe
     try {
-      await firebase.auth().signInWithEmailAndPassword(adminEmail, adminPassword);
-      console.log("Conta admin já existe e está ativa");
-      await firebase.auth().signOut(); // Fazer logout para permitir login normal
-      return;
-    } catch (loginError) {
-      if (loginError.code === "auth/user-not-found") {
-        console.log("Criando conta admin padrão...");
+      const userCredential = await firebase.auth().createUserWithEmailAndPassword(adminEmail, adminPassword);
+      const uid = userCredential.user.uid;
 
-        const userCredential = await firebase.auth().createUserWithEmailAndPassword(adminEmail, adminPassword);
-        const uid = userCredential.user.uid;
+      await firebase.firestore().collection("users").doc(uid).set({
+        name: adminName,
+        username: "admin",
+        email: adminEmail,
+        permissions: {
+          viewDashboard: true,
+          viewAgenda: true,
+          createClient: true,
+          editClient: true,
+          createAppointment: true,
+          editAppointment: true,
+          changeStatus: true,
+          viewFinance: true,
+          admin: true,
+        },
+        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      });
 
-        await firebase.firestore().collection("users").doc(uid).set({
-          name: adminName,
-          username: "admin",
-          email: adminEmail,
-          permissions: {
-            viewDashboard: true,
-            viewAgenda: true,
-            createClient: true,
-            editClient: true,
-            createAppointment: true,
-            editAppointment: true,
-            changeStatus: true,
-            viewFinance: true,
-            admin: true,
-          },
-          createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-          updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-        });
-
-        console.log("Conta admin criada com sucesso");
-        await firebase.auth().signOut();
+      console.log("Conta admin criada com sucesso");
+      
+      // Fazer logout imediatamente para não deixar usuário logado
+      await firebase.auth().signOut();
+    } catch (createError) {
+      if (createError.code === "auth/email-already-in-use") {
+        console.log("Conta admin já existe");
+        // Não fazer login, deixar para o usuário fazer
       } else {
-        console.log("Conta admin pode já existir:", loginError.message);
+        throw createError;
       }
     }
   } catch (error) {
