@@ -6,7 +6,7 @@ const currency = new Intl.NumberFormat("pt-BR", {
 });
 
 const DEFAULT_SETTINGS = {
-  companyName: "Rayssa Oliveira",
+  companyName: "Barbara Beauty",
   subtitle: "Nail designer",
   logoText: "R",
   logoImage: "",
