@@ -221,12 +221,10 @@ function isFirebaseConfigured() {
   const invalidProjectIds = [
     "YOUR_PROJECT_ID",
     "SEU_PROJETO",
-    "barbarabeauty-5d75a",
     "",
   ];
 
   const invalidAuthDomains = [
-    "barbarabeauty-5d75a.firebaseapp.com",
     "",
   ];
 
