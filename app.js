@@ -221,6 +221,7 @@ function isFirebaseConfigured() {
   const invalidProjectIds = [
     "YOUR_PROJECT_ID",
     "SEU_PROJETO",
+    "barbarabeauty-5d75a",
     "",
   ];
 
