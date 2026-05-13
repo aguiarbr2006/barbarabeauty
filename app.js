@@ -225,15 +225,23 @@ function isFirebaseConfigured() {
     "",
   ];
 
+  const invalidAuthDomains = [
+    "barbarabeauty-5d75a.firebaseapp.com",
+    "",
+  ];
+
   const apiKey = String(config?.apiKey || "");
+  const authDomain = String(config?.authDomain || "");
   const projectId = String(config?.projectId || "");
 
   return Boolean(
     window.firebase &&
       config &&
       apiKey &&
+      authDomain &&
       projectId &&
       !invalidApiKeys.some((invalid) => apiKey.includes(invalid)) &&
+      !invalidAuthDomains.some((invalid) => authDomain.includes(invalid)) &&
       !invalidProjectIds.some((invalid) => projectId.includes(invalid))
   );
 }
