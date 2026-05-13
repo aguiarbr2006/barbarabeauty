@@ -210,13 +210,30 @@ function replaceState(nextState) {
 
 function isFirebaseConfigured() {
   const config = window.BARBARA_FIREBASE_CONFIG;
+  const invalidApiKeys = [
+    "YOUR_API_KEY",
+    "YOUR_API_KEY_AQUI",
+    "SUA_API_KEY_AQUI",
+    "SEU_API_KEY",
+    "" // empty string
+  ];
+
+  const invalidProjectIds = [
+    "YOUR_PROJECT_ID",
+    "SEU_PROJETO",
+    "",
+  ];
+
+  const apiKey = String(config?.apiKey || "");
+  const projectId = String(config?.projectId || "");
+
   return Boolean(
     window.firebase &&
       config &&
-      config.apiKey &&
-      config.projectId &&
-      !String(config.apiKey).startsWith("YOUR_API_KEY") &&
-      !String(config.projectId).startsWith("YOUR_PROJECT_ID")
+      apiKey &&
+      projectId &&
+      !invalidApiKeys.some((invalid) => apiKey.includes(invalid)) &&
+      !invalidProjectIds.some((invalid) => projectId.includes(invalid))
   );
 }
 
