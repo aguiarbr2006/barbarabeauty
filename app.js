@@ -209,7 +209,7 @@ function replaceState(nextState) {
 }
 
 function isFirebaseConfigured() {
-  const config = window.RAYSSA_FIREBASE_CONFIG;
+  const config = window.BARBARABEAUTY_FIREBASE_CONFIG;
   return Boolean(
     window.firebase &&
       config &&
@@ -228,7 +228,7 @@ async function initAuth() {
   }
 
   try {
-    if (!firebase.apps.length) firebase.initializeApp(window.RAYSSA_FIREBASE_CONFIG);
+    if (!firebase.apps.length) firebase.initializeApp(window.BARBARABEAUTY_FIREBASE_CONFIG);
 
     if (window.location.protocol === "file:") {
       showLogin();
@@ -429,9 +429,9 @@ function initRemoteSync() {
   }
 
   try {
-    if (!firebase.apps.length) firebase.initializeApp(window.RAYSSA_FIREBASE_CONFIG);
+    if (!firebase.apps.length) firebase.initializeApp(window.BARBARABEAUTY_FIREBASE_CONFIG);
     remoteDb = firebase.firestore();
-    remoteDocRef = remoteDb.doc(window.RAYSSA_FIREBASE_DOC_PATH || "sistemas/rayssa-oliveira");
+    remoteDocRef = remoteDb.doc(window.BARBARABEAUTY_FIREBASE_DOC_PATH || "sistemas/BARBARABEAUTY");
 
     remoteDocRef.onSnapshot(
       (snapshot) => {
