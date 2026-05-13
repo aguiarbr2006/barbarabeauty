@@ -336,11 +336,28 @@ async function createDefaultAdminAccount() {
 async function loadUserPermissions(uid) {
   try {
     if (!remoteDb) remoteDb = firebase.firestore();
+    
+    // Se é a conta admin padrão, dar permissões completas
+    if (currentUser?.email === "aguiar-br@hotmail.com") {
+      userPermissions = {
+        viewDashboard: true,
+        viewAgenda: true,
+        createClient: true,
+        editClient: true,
+        createAppointment: true,
+        editAppointment: true,
+        changeStatus: true,
+        viewFinance: true,
+        admin: true,
+      };
+      return;
+    }
+    
     const doc = await remoteDb.collection("users").doc(uid).get();
     if (doc.exists) {
       userPermissions = doc.data().permissions || {};
     } else {
-      // Se o documento não existe, é um novo usuário
+      // Se o documento não existe, é um novo usuário - permissões vazias
       userPermissions = {};
     }
   } catch (error) {
@@ -351,6 +368,8 @@ async function loadUserPermissions(uid) {
 
 function checkPermission(permission) {
   if (!currentUser) return false;
+  // Admin padrão sempre tem acesso completo
+  if (currentUser?.email === "aguiar-br@hotmail.com") return true;
   if (userPermissions.admin) return true;
   return userPermissions[permission] || false;
 }

@@ -2,14 +2,16 @@
 // No need for imports - firebase global object is available from script tags.
 // Substitua os valores abaixo pelos dados reais do seu projeto Firebase.
 
+// Instruções: Obtenha essas valores no Console do Firebase
+// Projeto > Configurações > Suas Apps > Barbara Beauty > Copie os valores abaixo
 window.BARBARA_FIREBASE_CONFIG = {
-  apiKey: "SUA_API_KEY_AQUI",
-  authDomain: "barbarabeauty.firebaseapp.com",
-  projectId: "barbarabeauty",
-  storageBucket: "barbarabeauty.appspot.com",
-  messagingSenderId: "SEU_MESSAGING_SENDER_ID",
-  appId: "SEU_APP_ID",
-  measurementId: "SEU_MEASUREMENT_ID"
+  apiKey: "AIzaSyBfwCRrvq-WPlcTkwNxrnMLI8ThQOGxW9E", // Substitua com sua API Key
+  authDomain: "barbarabeauty-5d75a.firebaseapp.com", // Substitua com seu projeto
+  projectId: "barbarabeauty-5d75a", // Substitua com seu projectId
+  storageBucket: "barbarabeauty-5d75a.firebasestorage.app", // Substitua com seu projeto
+  messagingSenderId: "207260630604", // Substitua
+  appId: "1:207260630604:web:eef19636976d1bd4e37ee9", // Substitua
+  measurementId: "G-M4DKXD38NW" // Opcional, substitua se tiver
 };
 
 // Document path for syncing across devices
