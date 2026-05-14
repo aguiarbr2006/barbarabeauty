@@ -266,7 +266,7 @@ async function createDefaultAdminAccount() {
 
     // Tentar fazer login com a conta admin para verificar se ela existe
     try {
-      await firebase.auth().signInWithEmailAndPassword(adminName, adminPassword);
+      await firebase.auth().signInWithEmailAndPassword(adminEmail, adminPassword);
       console.log("Conta admin já existe e está ativa");
       await firebase.auth().signOut(); // Fazer logout para permitir login normal
       return;
