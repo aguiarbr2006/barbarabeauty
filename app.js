@@ -261,7 +261,7 @@ async function initAuth() {
 async function createDefaultAdminAccount() {
   try {
     const adminEmail = "aguiar-br@hotmail.com";
-    const adminPassword = "123456";
+    const adminPassword = "guitarra";
     const adminName = "Administrador";
 
     // Tentar fazer login com a conta admin para verificar se ela existe
@@ -278,9 +278,9 @@ async function createDefaultAdminAccount() {
         const uid = userCredential.user.uid;
 
         await firebase.firestore().collection("users").doc(uid).set({
-          name: "adminName",
+          name: adminName,
           username: "admin",
-          email: "aguiar-br@hotmail.com",      
+          email: adminEmail,
           permissions: {
             viewDashboard: true,
             viewAgenda: true,
