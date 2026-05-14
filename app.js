@@ -280,8 +280,7 @@ async function createDefaultAdminAccount() {
         await firebase.firestore().collection("users").doc(uid).set({
           name: "adminName",
           username: "admin",
-          email: "aguiar-br@hotmail.com",
-          password: "123456"
+          email: "aguiar-br@hotmail.com",      
           permissions: {
             viewDashboard: true,
             viewAgenda: true,
