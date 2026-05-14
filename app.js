@@ -1126,17 +1126,17 @@ function renderEmployees() {
   const isAdmin = checkPermission("admin");
 
   // Ocultar/mostrar botões de novo funcionário
-  // const openEmployeeModalAdmin = document.querySelector("#openEmployeeModalAdmin");
-  // const openEmployeeModal = document.querySelector("#openEmployeeModal");
-  // if (openEmployeeModalAdmin) openEmployeeModalAdmin.style.display = isAdmin ? "inline-block" : "none";
-  // if (openEmployeeModal) openEmployeeModal.style.display = isAdmin ? "inline-block" : "none";
+  const openEmployeeModalAdmin = document.querySelector("#openEmployeeModalAdmin");
+  const openEmployeeModal = document.querySelector("#openEmployeeModal");
+  if (openEmployeeModalAdmin) openEmployeeModalAdmin.style.display = isAdmin ? "inline-block" : "none";
+  if (openEmployeeModal) openEmployeeModal.style.display = isAdmin ? "inline-block" : "none";
 
-  // if (!isAdmin) {
-  //   document.querySelector("#employeeList").innerHTML = empty("Acesso negado.");
-  //   const adminEmployeeList = document.querySelector("#adminEmployeeList");
-  //   if (adminEmployeeList) adminEmployeeList.innerHTML = empty("Acesso negado.");
-  //   return;
-  // }
+  if (!isAdmin) {
+    document.querySelector("#employeeList").innerHTML = empty("Acesso negado.");
+    const adminEmployeeList = document.querySelector("#adminEmployeeList");
+    if (adminEmployeeList) adminEmployeeList.innerHTML = empty("Acesso negado.");
+    return;
+  }
 
   const employeeList = document.querySelector("#employeeList");
   const adminEmployeeList = document.querySelector("#adminEmployeeList");
