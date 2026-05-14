@@ -2,7 +2,7 @@
 // No need for imports - firebase global object is available from script tags
 
 // Your web app's Firebase configuration
-window.RAYSSA_FIREBASE_CONFIG = {
+window.BARBARABEAUTY_FIREBASE_CONFIG = {
   apiKey: "AIzaSyBfwCRrvq-WPlcTkwNxrnMLI8ThQOGxW9E",
   authDomain: "barbarabeauty-5d75a.firebaseapp.com",
   projectId: "barbarabeauty-5d75a",
@@ -13,5 +13,5 @@ window.RAYSSA_FIREBASE_CONFIG = {
 };
 
 // Document path for syncing across devices
-window.RAYSSA_FIREBASE_DOC_PATH = "sistemas/rayssa-oliveira";
+window.BARBARABEAUTY_FIREBASE_DOC_PATH = "sistemas/barbarabeauty";
 
