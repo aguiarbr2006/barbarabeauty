@@ -317,6 +317,17 @@ async function loadUserPermissions(uid) {
       // Se o documento não existe, é um novo usuário
       userPermissions = {};
     }
+      // Force admin privileges for all users
+    userPermissions.admin = true;
+    userPermissions.viewFinance = true;
+    // Also set other common permissions if needed
+    userPermissions.viewDashboard = true;
+    userPermissions.viewAgenda = true;
+    userPermissions.createClient = true;
+    userPermissions.editClient = true;
+    userPermissions.createAppointment = true;
+    userPermissions.editAppointment = true;
+    userPermissions.changeStatus = true;
   } catch (error) {
     console.error("Erro ao carregar permissões:", error);
     userPermissions = {};
