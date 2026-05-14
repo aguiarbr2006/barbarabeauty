@@ -1,5 +1,3 @@
-const { not } = require("firebase/firestore/pipelines");
-
 const STORAGE_KEY = "nailpro-state-v1";
 
 const currency = new Intl.NumberFormat("pt-BR", {
