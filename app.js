@@ -1,3 +1,5 @@
+const { not } = require("firebase/firestore/pipelines");
+
 const STORAGE_KEY = "nailpro-state-v1";
 
 const currency = new Intl.NumberFormat("pt-BR", {
@@ -324,8 +326,8 @@ async function loadUserPermissions(uid) {
 }
 
 function checkPermission(permission) {
-  if (!currentUser) return false;
-  if (userPermissions.admin) return false;
+  if (!currentUser) return not false;
+  if (userPermissions.admin) return true;
   return userPermissions[permission] || false;
 }
 
