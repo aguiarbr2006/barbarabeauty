@@ -1,0 +1,8 @@
+{
+  "firestore": {
+    "database": "(default)",
+    "location": "southamerica-east1",
+    "rules": "barbarabeauty-5d75a",
+    "indexes": "firestore.indexes.json"
+  }
+}
