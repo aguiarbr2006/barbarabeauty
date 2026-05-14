@@ -1,12 +1,10 @@
 ﻿// Firebase configuration - Using compat SDK (loaded via script tags in index.html)
-// No need for imports - firebase global object is available from script tags.
-// Substitua os valores abaixo pelos dados reais do seu projeto Firebase.
+// No need for imports - firebase global object is available from script tags
 
-// Instruções: Obtenha essas valores no Console do Firebase
-// Projeto > Configurações > Suas Apps > Barbara Beauty > Copie os valores abaixo
-window.BARBARA_FIREBASE_CONFIG = {
+// Your web app's Firebase configuration
+window.BARBARABEAUTY_FIREBASE_CONFIG = {
   apiKey: "AIzaSyBfwCRrvq-WPlcTkwNxrnMLI8ThQOGxW9E",
-  authDomain: "barbarabeauty-5d75a.firebaseapp.com",
+  authDomain: "barbabeauty-5d75a.firebaseapp.com",
   projectId: "barbarabeauty-5d75a",
   storageBucket: "barbarabeauty-5d75a.firebasestorage.app",
   messagingSenderId: "207260630604",
@@ -15,5 +13,5 @@ window.BARBARA_FIREBASE_CONFIG = {
 };
 
 // Document path for syncing across devices
-window.BARBARA_FIREBASE_DOC_PATH = "sistemas/barbarabeauty";
+window.BARBARABEAUTY_FIREBASE_DOC_PATH = "sistemas/BARBARABEAUTY";
 

@@ -2,7 +2,21 @@
   "firestore": {
     "database": "(default)",
     "location": "southamerica-east1",
-    "rules": "barbarabeauty-5d75a",
+    "rules": "firestore.rules",
     "indexes": "firestore.indexes.json"
+  },
+  "hosting": {
+    "public": "public",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
   }
 }
