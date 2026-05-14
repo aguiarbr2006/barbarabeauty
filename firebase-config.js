@@ -1,7 +1,7 @@
 ﻿// Firebase configuration - Using compat SDK (loaded via script tags in index.html)
 // No need for imports - firebase global object is available from script tags
 
-// Your web app's Firebase configuration
+// Your web app's Firebase configuration.
 window.RAYSSA_FIREBASE_CONFIG = {
   apiKey: "AIzaSyBfwCRrvq-WPlcTkwNxrnMLI8ThQOGxW9E",
   authDomain: "barbarabeauty-5d75a.firebaseapp.com",
