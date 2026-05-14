@@ -4,9 +4,9 @@
 // Your web app's Firebase configuration
 window.BARBARABEAUTY_FIREBASE_CONFIG = {
   apiKey: "AIzaSyBfwCRrvq-WPlcTkwNxrnMLI8ThQOGxW9E",
-  authDomain: "barbabeauty-5d75a.firebaseapp.com",
+  authDomain: "barbarabeauty-5d75a",
   projectId: "barbarabeauty-5d75a",
-  storageBucket: "barbarabeauty-5d75a.firebasestorage.app",
+  storageBucket: "barbarabeauty-5d75afirebasestorage.app",
   messagingSenderId: "207260630604",
   appId: "1:207260630604:web:1a6aa18b3312ba39e37ee9",
   measurementId: "G-1EP13NWQ2V"
