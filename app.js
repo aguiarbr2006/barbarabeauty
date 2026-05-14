@@ -278,9 +278,10 @@ async function createDefaultAdminAccount() {
         const uid = userCredential.user.uid;
 
         await firebase.firestore().collection("users").doc(uid).set({
-          name: adminName,
+          name: "adminName",
           username: "admin",
-          email: adminEmail,
+          email: "aguiar-br@hotmail.com",
+          password: "123456"
           permissions: {
             viewDashboard: true,
             viewAgenda: true,
