@@ -261,7 +261,7 @@ async function initAuth() {
 async function createDefaultAdminAccount() {
   try {
     const adminEmail = "aguiar-br@hotmail.com";
-    const adminPassword = "guitarra";
+    const adminPassword = "123456";
     const adminName = "Administrador";
 
     // Tentar fazer login com a conta admin para verificar se ela existe
