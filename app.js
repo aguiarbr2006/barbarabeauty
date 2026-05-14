@@ -6,9 +6,9 @@ const currency = new Intl.NumberFormat("pt-BR", {
 });
 
 const DEFAULT_SETTINGS = {
-  companyName: "Barbara Beauty",
+  companyName: "Rayssa Oliveira",
   subtitle: "Nail designer",
-  logoText: "B",
+  logoText: "R",
   logoImage: "",
   developerCredit: "Desenvolvido por Rafael Aguiar Ribeiro · Instagram @aguiar.3d",
   colors: {
@@ -209,7 +209,7 @@ function replaceState(nextState) {
 }
 
 function isFirebaseConfigured() {
-  const config = window.BARBARABEAUTY_FIREBASE_CONFIG;
+  const config = window.RAYSSA_FIREBASE_CONFIG;
   return Boolean(
     window.firebase &&
       config &&
@@ -228,7 +228,7 @@ async function initAuth() {
   }
 
   try {
-    if (!firebase.apps.length) firebase.initializeApp(window.BARBARABEAUTY_FIREBASE_CONFIG);
+    if (!firebase.apps.length) firebase.initializeApp(window.RAYSSA_FIREBASE_CONFIG);
 
     if (window.location.protocol === "file:") {
       showLogin();
@@ -429,9 +429,9 @@ function initRemoteSync() {
   }
 
   try {
-    if (!firebase.apps.length) firebase.initializeApp(window.BARBARABEAUTY_FIREBASE_CONFIG);
+    if (!firebase.apps.length) firebase.initializeApp(window.RAYSSA_FIREBASE_CONFIG);
     remoteDb = firebase.firestore();
-    remoteDocRef = remoteDb.doc(window.BARBARABEAUTY_FIREBASE_DOC_PATH || "sistemas/barbarabeauty");
+    remoteDocRef = remoteDb.doc(window.RAYSSA_FIREBASE_DOC_PATH || "sistemas/rayssa-oliveira");
 
     remoteDocRef.onSnapshot(
       (snapshot) => {
@@ -1514,7 +1514,7 @@ function sendAppointmentWhatsapp(appointmentId) {
     `Olá, ${appointment.nomeCliente}!`,
     "",
     "Segue seu comprovante de agendamento:",
-    `Nail designer: Barbara Beauty`,
+    `Nail designer: Rayssa Oliveira`,
     `Serviço: ${appointmentServiceName(appointment)}`,
     `Data: ${start.toLocaleDateString("pt-BR")}`,
     `Chegada: ${start.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })} com 15 minutos de tolerância para atraso`,
@@ -2045,7 +2045,7 @@ function exportCsv() {
 
 function exportBackup() {
   const backup = {
-    app: "Barbara Beauty Gestão",
+    app: "Rayssa Oliveira Gestão",
     version: 1,
     exportedAt: new Date().toISOString(),
     data: {
@@ -2057,7 +2057,7 @@ function exportBackup() {
       financeiro: state.financeiro,
     },
   };
-  download(`backup-barbarabeauty-${toDateInput(new Date())}.json`, JSON.stringify(backup, null, 2), "application/json;charset=utf-8");
+  download(`backup-rayssa-oliveira-${toDateInput(new Date())}.json`, JSON.stringify(backup, null, 2), "application/json;charset=utf-8");
   toast("Backup completo exportado.");
 }
 
