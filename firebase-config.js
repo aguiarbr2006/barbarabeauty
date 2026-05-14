@@ -3,13 +3,13 @@
 
 // Your web app's Firebase configuration.
 window.BARBARABEAUTY_FIREBASE_CONFIG = {
-  apiKey: "AIzaSyBfwCRrvq-WPlcTkwNxrnMLI8ThQOGxW9E",
-  authDomain: "barbarabeauty-5d75a.firebaseapp.com",
-  projectId: "barbarabeauty-5d75a",
-  storageBucket: "barbarabeauty-5d75a.firebasestorage.app",
-  messagingSenderId: "207260630604",
-  appId: "1:207260630604:web:eef19636976d1bd4e37ee9",
-  measurementId: "G-M4DKXD38NW"
+   apiKey: "AIzaSyCUprT1dwKy4ux9eBsh-R89VBSUJB_Dxfk",
+  authDomain: "aguiar-c02f4.firebaseapp.com",
+  databaseURL: "https://aguiar-c02f4.firebaseio.com",
+  projectId: "aguiar-c02f4",
+  storageBucket: "aguiar-c02f4.firebasestorage.app",
+  messagingSenderId: "14133392151",
+  appId: "1:14133392151:web:7c78152c87dbf037357d52"
 };
 
 // Document path for syncing across devices
