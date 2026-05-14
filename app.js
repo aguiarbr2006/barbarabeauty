@@ -1263,7 +1263,7 @@ function packageCard(pacote) {
         <span class="badge ${pacote.status === "finalizado" ? "concluido" : ""}">${pacote.status}</span>
       </div>
       <div>Valor pago: <strong>${money(pacote.valorPago)}</strong></div>
-      <div>Pé e mão: <strong>${peMaoRestante}</strong> de ${pacote.peMaoTotal} restante(s)</div>
+      <div>Sobrancelha: <strong>${peMaoRestante}</strong> de ${pacote.peMaoTotal} restante(s)</div>
       <div>Mão: <strong>${maoRestante}</strong> de ${pacote.maoTotal} restante(s)</div>
       <div class="actions">
         <button class="ghost-button" data-edit-package="${pacote.id}">Editar</button>
