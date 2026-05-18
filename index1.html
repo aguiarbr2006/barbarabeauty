@@ -6,8 +6,13 @@
     <meta name="theme-color" content="#4f7d5a" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+<<<<<<< HEAD
+    <meta name="apple-mobile-web-app-title" content="Barbara Beauty" />
+    <title>Barbara Beauty Gestão</title>
+=======
     <meta name="apple-mobile-web-app-title" content="Barba Beauty" />
     <title>Barba Beauty</title>
+>>>>>>> 17ab6d3cfb0233c2fd0d474ec4b971ec65031b40
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -25,8 +30,20 @@
     <div id="loginOverlay" class="login-overlay">
       <div class="login-modal">
         <div class="login-header">
+<<<<<<< HEAD
+          <div class="login-brand brand">
+            <span class="brand-mark">A</span>
+            <div>
+              <strong>Barbara Beauty</strong>
+              <small>Acesso de Funcionários</small>
+            </div>
+          </div>
+          <h1 id="loginCompanyName">Barbara Beauty</h1>
+          <p id="loginSubtitle">Acesso de Funcionários</p>
+=======
           <h1>Barba Beauty</h1>
           <p>Acesso de Funcionários</p>
+>>>>>>> 17ab6d3cfb0233c2fd0d474ec4b971ec65031b40
         </div>
         <form id="loginForm" class="login-form">
           <label id="loginIdentifierField">
@@ -48,10 +65,15 @@
     <div class="app-shell" id="appShell" style="display: none;">
       <aside class="sidebar">
         <div class="brand">
-          <span class="brand-mark">B</span>
+          <span class="brand-mark">A</span>
           <div>
+<<<<<<< HEAD
+            <strong>Barbara Beauty</strong>
+            <small>Administrador</small>
+=======
             <strong>Barba Beauty</strong>
             <small>Nail designer</small>
+>>>>>>> 17ab6d3cfb0233c2fd0d474ec4b971ec65031b40
           </div>
         </div>
         <nav class="nav" aria-label="Navegação principal">
@@ -236,16 +258,25 @@
               <label>Cor escura <small>Cor do texto secundário e botões ghost</small><input id="settingGreenDark" type="color" /></label>
               <label>Fundo<input id="settingBeige" type="color" /></label>
               <label>Texto <small>Cor do texto principal</small><input id="settingInk" type="color" /></label>
+<<<<<<< HEAD
+              <label>Cor da barra de alerta<input id="settingAlert" type="color" /></label>
+=======
+>>>>>>> 17ab6d3cfb0233c2fd0d474ec4b971ec65031b40
               <label>Taxa Débito (%)<input id="taxaDebito" type="number" min="0" step="0.01" /></label>
               <label>Taxa Crédito (%)<input id="taxaCredito" type="number" min="0" step="0.01" /></label>
               <label>Desconto Dinheiro/Pix (%)<input id="descontoDinheiroPix" type="number" min="0" step="0.01" /></label>
               <label>Crédito do desenvolvedor<input id="settingDeveloperCredit" readonly /></label>
             </div>
             <div class="admin-preview">
-              <span class="brand-mark" id="adminLogoPreview">B</span>
+              <span class="brand-mark" id="adminLogoPreview">A</span>
               <div>
+<<<<<<< HEAD
+                <strong id="adminNamePreview">Barbara Beauty</strong>
+                <small id="adminSubtitlePreview">Administrador</small>
+=======
                 <strong id="adminNamePreview">Barba Beauty</strong>
                 <small id="adminSubtitlePreview">Nail designer</small>
+>>>>>>> 17ab6d3cfb0233c2fd0d474ec4b971ec65031b40
               </div>
               <button class="primary-button" type="button">Botão principal</button>
               <button class="ghost-button" type="button">Botão secundário</button>
@@ -383,11 +414,8 @@
           <label>Cliente<select id="appointmentClient" required></select></label>
           <label class="checkbox"><input id="usePackage" type="checkbox" /> Usar pacote da cliente</label>
           <label class="package-field">Pacote<select id="appointmentPackage"></select></label>
-          <label class="package-field">Crédito usado
-            <select id="packageCreditType">
-              <option value="peMao">Pé e mão</option>
-              <option value="mao">Mão</option>
-            </select>
+          <label class="package-field">Serviço do pacote
+            <select id="packageCreditType"></select>
           </label>
           <div class="form-help package-field" id="packageHelp">Cadastre um pacote para a cliente antes de usar esta opção.</div>
           <label class="service-field">Serviço 1<select id="appointmentService"></select></label>
@@ -433,8 +461,12 @@
         <label>Cliente<select id="packageClient" required></select></label>
         <label>Nome do pacote<input id="packageName" value="Pacote mensal" required /></label>
         <label>Valor pago<input id="packageValue" type="number" min="0" step="0.01" required /></label>
+<<<<<<< HEAD
+        <div class="package-services" id="packageServices"></div>
+=======
         <label>Créditos de pé e mão<input id="packagePeMao" type="number" min="0" step="1" value="2" required /></label>
         <label>Créditos de mão<input id="packageMao" type="number" min="0" step="1" value="2" required /></label>
+>>>>>>> 17ab6d3cfb0233c2fd0d474ec4b971ec65031b40
         <label>Validade<input id="packageExpires" type="date" /></label>
         <footer>
           <button type="button" class="danger-button" id="deletePackage">Excluir pacote</button>
