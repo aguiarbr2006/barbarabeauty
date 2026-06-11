@@ -1,26 +1,41 @@
+// Chave usada para guardar uma cópia simples dos dados no navegador.
+// Isso ajuda a manter uma referência local do último estado recebido do Firebase.
 const STORAGE_KEY = "nailpro-client-cache-v1";
 
+// Formatador de moeda em real brasileiro.
+// Sempre que o sistema mostrar valores, usamos essa configuração.
 const currency = new Intl.NumberFormat("pt-BR", {
   style: "currency",
   currency: "BRL",
 });
 
+// Variáveis principais da conexão com Firebase e do usuário logado.
 let db = null;
 let docRef = null;
 let currentUser = null;
+
+// Estado principal da página da cliente.
+// Ele recebe os dados que vêm do Firestore: clientes, serviços,
+// agendamentos, configurações e conteúdo do site público.
 let state = {
   clientes: [],
   servicos: [],
   agendamentos: [],
+  settings: {},
+  landingContent: {},
 };
 let currentClient = null;
 let authMode = "login";
 
+// Elementos principais da tela.
+// Guardar essas referências evita procurar os mesmos elementos várias vezes.
 const authPanel = document.querySelector("#authPanel");
 const bookingPanel = document.querySelector("#bookingPanel");
 const authMessage = document.querySelector("#authMessage");
 const bookingMessage = document.querySelector("#bookingMessage");
 
+// Confere se o Firebase foi configurado corretamente.
+// Se faltar apiKey/projectId, a página mostra uma mensagem em vez de quebrar.
 function isFirebaseConfigured() {
   const config = window.FIREBASE_CONFIG;
   return Boolean(
@@ -33,7 +48,26 @@ function isFirebaseConfigured() {
   );
 }
 
+// Transforma uma imagem em um valor seguro para usar dentro de background-image no CSS.
+// Exemplo final: url("assets/site/hero-placeholder.svg")
+function cssImageUrl(src) {
+  const fallback = "assets/site/hero-placeholder.svg";
+  const value = String(src || fallback).replace(/["\\\n\r]/g, "");
+  return `url("${value}")`;
+}
+
+// Aplica na página de agendamento a mesma foto de fundo da página principal.
+// A foto principal fica salva em landingContent.heroImage, que vem do editor do site.
+function applyClientLandingContent(content = {}) {
+  document.documentElement.style.setProperty("--client-hero-image", cssImageUrl(content.heroImage));
+}
+
+// Função inicial da página.
+// Ela valida o Firebase, inicializa a conexão e registra os eventos de login/agendamento.
 function init() {
+  // Mesmo antes do Firebase responder, já usamos a imagem local padrão.
+  applyClientLandingContent();
+
   if (!isFirebaseConfigured()) {
     setAuthMessage("Firebase nao configurado. Configure o Firebase para ativar login e agendamento online.");
     return;
@@ -46,13 +80,16 @@ function init() {
   if (!firebase.apps.length) firebase.initializeApp(window.FIREBASE_CONFIG);
   db = firebase.firestore();
   docRef = db.doc(window.FIREBASE_DOC_PATH || "sistemas/firebase");
+  subscribeState();
 
+  // Escuta o login/logout do Firebase Auth.
+  // Quando existe usuário logado, mostramos o painel de agendamento.
+  // Quando não existe, mostramos o painel de entrada/cadastro.
   firebase.auth().onAuthStateChanged((user) => {
     currentUser = user;
     if (user) {
       showBooking();
       fillProfileFromUser(user);
-      subscribeState();
     } else {
       currentClient = null;
       showAuth();
@@ -62,6 +99,8 @@ function init() {
   bindEvents();
 }
 
+// Liga os cliques e envios dos formulários às funções JavaScript.
+// Esta função concentra os eventos para ficar mais fácil encontrar o que cada botão faz.
 function bindEvents() {
   document.querySelector("#googleLogin").addEventListener("click", signInWithGoogle);
   document.querySelector("#emailAuthForm").addEventListener("submit", handleEmailAuth);
@@ -85,6 +124,7 @@ function bindEvents() {
   });
 }
 
+// Login com Google usando o popup padrão do Firebase Auth.
 async function signInWithGoogle() {
   setAuthMessage("");
   try {
@@ -96,6 +136,8 @@ async function signInWithGoogle() {
   }
 }
 
+// Trata login e cadastro por email/senha.
+// O botão clicado define authMode: "login" para entrar ou "signup" para cadastrar.
 async function handleEmailAuth(event) {
   event.preventDefault();
   setAuthMessage("");
@@ -116,6 +158,7 @@ async function handleEmailAuth(event) {
   }
 }
 
+// Traduz alguns erros comuns do Firebase para mensagens mais amigáveis em português.
 function authErrorMessage(error) {
   if (error.code === "auth/popup-closed-by-user") return "Login com Google cancelado.";
   if (error.code === "auth/email-already-in-use") return "Este email ja tem cadastro. Use Entrar.";
@@ -127,6 +170,8 @@ function authErrorMessage(error) {
   return error.message || "Nao foi possivel autenticar.";
 }
 
+// Escuta em tempo real o documento principal do Firestore.
+// Quando o sistema administrativo altera dados, esta página recebe a atualização.
 function subscribeState() {
   docRef.onSnapshot(
     (snapshot) => {
@@ -136,8 +181,10 @@ function subscribeState() {
         servicos: Array.isArray(remoteState.servicos) ? remoteState.servicos : [],
         agendamentos: Array.isArray(remoteState.agendamentos) ? remoteState.agendamentos : [],
         settings: remoteState.settings || {},
+        landingContent: remoteState.landingContent || {},
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      applyClientLandingContent(state.landingContent);
       syncClientFromState();
       renderServices();
       renderAvailableSlots();
@@ -150,21 +197,26 @@ function subscribeState() {
   );
 }
 
+// Mostra o formulário de login/cadastro e esconde o painel de agendamento.
 function showAuth() {
   authPanel.classList.remove("hidden");
   bookingPanel.classList.add("hidden");
 }
 
+// Mostra o painel de agendamento e esconde o formulário de login/cadastro.
 function showBooking() {
   authPanel.classList.add("hidden");
   bookingPanel.classList.remove("hidden");
 }
 
+// Preenche os campos de nome/email com os dados básicos do usuário logado.
 function fillProfileFromUser(user) {
   document.querySelector("#clientName").value = user.displayName || "";
   document.querySelector("#clientEmail").value = user.email || "";
 }
 
+// Procura no estado do sistema qual cliente corresponde ao usuário logado.
+// A busca tenta primeiro pelo authUid e depois pelo email.
 function syncClientFromState() {
   if (!currentUser) return;
   currentClient =
@@ -179,6 +231,7 @@ function syncClientFromState() {
   }
 }
 
+// Salva ou atualiza os dados de contato da cliente no Firestore.
 async function saveClientProfile(event) {
   event.preventDefault();
   if (!currentUser) return;
@@ -198,6 +251,8 @@ async function saveClientProfile(event) {
   }
 }
 
+// Permite trocar a senha quando a conta foi criada por email/senha.
+// Contas Google precisam alterar a senha diretamente na conta Google.
 async function updateClientPassword(event) {
   event.preventDefault();
   if (!currentUser) return;
@@ -223,6 +278,8 @@ async function updateClientPassword(event) {
   }
 }
 
+// Cria ou atualiza o cadastro da cliente dentro do documento principal.
+// Usamos transação para ler o estado atual, alterar com segurança e salvar de volta.
 async function upsertClientProfile({ name, phone }) {
   await db.runTransaction(async (transaction) => {
     const snapshot = await transaction.get(docRef);
@@ -264,6 +321,7 @@ async function upsertClientProfile({ name, phone }) {
   });
 }
 
+// Renderiza a lista de serviços ativos no campo de seleção.
 function renderServices() {
   const select = document.querySelector("#bookingService");
   const selectedServiceId = select.value;
@@ -280,12 +338,14 @@ function renderServices() {
   updateServiceSummary();
 }
 
+// Retorna apenas serviços ativos e ordenados pelo nome.
 function activeServices() {
   return state.servicos
     .filter((service) => service.ativo !== false)
     .sort((a, b) => String(a.nome || "").localeCompare(String(b.nome || "")));
 }
 
+// Mostra um resumo do serviço escolhido: nome, valor e duração aproximada.
 function updateServiceSummary() {
   const service = state.servicos.find((item) => item.id === document.querySelector("#bookingService").value);
   const summary = document.querySelector("#serviceSummary");
@@ -296,6 +356,7 @@ function updateServiceSummary() {
   summary.textContent = `${service.nome} · ${money(service.valorPadrao)} · duracao aproximada de ${Number(service.duracaoMinutos || 60)} minutos.`;
 }
 
+// Calcula e mostra os horários livres para o serviço e a data escolhidos.
 function renderAvailableSlots() {
   const slotsEl = document.querySelector("#availableSlots");
   const service = state.servicos.find((item) => item.id === document.querySelector("#bookingService").value && item.ativo !== false);
@@ -329,22 +390,38 @@ function renderAvailableSlots() {
   });
 }
 
+// Gera sugestões de horários a cada 30 minutos e remove horários que já têm conflito.
 function getAvailableSlots(date, durationMinutes) {
   const slots = [];
-  const openingHour = 8;
-  const closingHour = 19;
+  const settings = state.settings || {};
+  const openingTime = settings.openingTime || "08:00";
+  const closingTime = settings.closingTime || "19:00";
+  const lunchStart = settings.lunchStart || "12:00";
+  const lunchEnd = settings.lunchEnd || "13:00";
   const stepMinutes = 30;
+  
   const now = new Date();
-  const dayStart = new Date(`${date}T${String(openingHour).padStart(2, "0")}:00`);
-  const dayEnd = new Date(`${date}T${String(closingHour).padStart(2, "0")}:00`);
+  const dayStart = new Date(`${date}T${openingTime}`);
+  const dayEnd = new Date(`${date}T${closingTime}`);
+  const lunchStartTime = new Date(`${date}T${lunchStart}`).getTime();
+  const lunchEndTime = new Date(`${date}T${lunchEnd}`).getTime();
 
   for (let start = new Date(dayStart); start.getTime() + durationMinutes * 60000 <= dayEnd.getTime(); start = new Date(start.getTime() + stepMinutes * 60000)) {
     if (start < now) continue;
-    const end = new Date(start.getTime() + durationMinutes * 60000);
+    
+    const startTime = start.getTime();
+    const endTime = startTime + durationMinutes * 60000;
+    
+    // Verificar conflito com horário de almoço
+    // Se o atendimento começar ou terminar dentro do almoço, ou englobar o almoço
+    if (startTime < lunchEndTime && endTime > lunchStartTime) {
+      continue;
+    }
+
     const candidate = {
       id: "candidate",
       dataHoraInicio: toDateTimeInput(start),
-      dataHoraFim: toDateTimeInput(end),
+      dataHoraFim: toDateTimeInput(new Date(endTime)),
       status: "Pendente confirmação",
     };
     if (!getScheduleConflict(state.agendamentos, candidate)) {
@@ -354,6 +431,8 @@ function getAvailableSlots(date, durationMinutes) {
   return slots;
 }
 
+// Envia a solicitação de agendamento.
+// Antes de salvar, valida dados da cliente, serviço, data, horário e conflitos.
 async function requestAppointment(event) {
   event.preventDefault();
   if (!currentUser) return;
@@ -470,6 +549,7 @@ async function requestAppointment(event) {
   }
 }
 
+// Depois que o agendamento é criado, mostra um resumo e monta o link do WhatsApp.
 function showBookingConfirmDialog({ clientName, serviceName, date, time, endTime, value, notes }) {
   const dialog = document.querySelector("#bookingConfirmDialog");
   if (!dialog) return;
@@ -508,6 +588,7 @@ function showBookingConfirmDialog({ clientName, serviceName, date, time, endTime
   dialog.showModal();
 }
 
+// Lista os agendamentos da cliente logada e mostra o status de cada um.
 function renderClientAppointments() {
   const list = document.querySelector("#clientAppointments");
   if (!currentUser) return;
@@ -534,6 +615,8 @@ function renderClientAppointments() {
     .join("");
 }
 
+// Garante que o estado recebido do Firestore tenha arrays e objetos válidos.
+// Isso evita erro caso alguma parte ainda não exista no banco.
 function normalizeState(remoteState) {
   return {
     ...remoteState,
@@ -543,9 +626,11 @@ function normalizeState(remoteState) {
     pacotes: Array.isArray(remoteState.pacotes) ? remoteState.pacotes : [],
     financeiro: Array.isArray(remoteState.financeiro) ? remoteState.financeiro : [],
     settings: remoteState.settings || {},
+    landingContent: remoteState.landingContent || {},
   };
 }
 
+// Verifica se um agendamento candidato entra em conflito com outro já existente.
 function getScheduleConflict(appointments, candidate) {
   const start = new Date(candidate.dataHoraInicio).getTime();
   const end = new Date(candidate.dataHoraFim).getTime();
@@ -558,10 +643,12 @@ function getScheduleConflict(appointments, candidate) {
     });
 }
 
+// Mostra mensagens no painel de autenticação.
 function setAuthMessage(message) {
   authMessage.textContent = message;
 }
 
+// Mostra uma mensagem temporária no rodapé da tela.
 function toast(message) {
   const toastEl = document.querySelector("#toast");
   toastEl.textContent = message;
@@ -570,24 +657,30 @@ function toast(message) {
   toastEl._timer = setTimeout(() => toastEl.classList.remove("show"), 3200);
 }
 
+// Formata números como moeda brasileira.
 function money(value) {
   return currency.format(Number(value || 0));
 }
 
+// Cria um id único para novos clientes/agendamentos.
 function id() {
   return crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
 }
 
+// Converte um objeto Date para o formato usado por input datetime-local.
 function toDateTimeInput(date) {
   const pad = (number) => String(number).padStart(2, "0");
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
+// Converte um objeto Date para "HH:mm".
 function toTimeInput(date) {
   const pad = (number) => String(number).padStart(2, "0");
   return `${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
+// Transforma o texto do status em classe CSS.
+// Exemplo: "Pendente confirmação" vira "pendente-confirmacao".
 function statusClass(status) {
   return String(status || "")
     .normalize("NFD")
@@ -596,6 +689,7 @@ function statusClass(status) {
     .replace(/\s+/g, "-");
 }
 
+// Escapa caracteres especiais para evitar que textos digitados virem HTML indevido.
 function escapeHtml(value) {
   return String(value || "")
     .replaceAll("&", "&amp;")
@@ -605,4 +699,5 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
+// Ponto de entrada: quando o arquivo carrega, iniciamos a página.
 init();

@@ -6,7 +6,7 @@ const DEFAULT_LANDING = {
   heroEyebrow: "Nail design, alongamento e cuidado",
   heroTitle: "Rayssa Oliveira Nail Design",
   heroDescription: "Unhas feitas com acabamento delicado, planejamento do formato e orientacao de cuidados para manter o resultado bonito por mais tempo.",
-  heroImage: "https://images.unsplash.com/photo-1604654894610-df63bc536371?auto=format&fit=crop&w=1300&q=85",
+  heroImage: "assets/site/hero-placeholder.svg",
   highlight1Title: "Atendimento personalizado",
   highlight1Text: "Escolha de formato, tamanho, cor e acabamento conforme seu estilo.",
   highlight2Title: "Procedimento orientado",
@@ -26,7 +26,7 @@ const DEFAULT_LANDING = {
   splitEyebrow: "Como funciona",
   splitTitle: "Do preparo a finalizacao, cada etapa protege o resultado",
   splitText: "O procedimento comeca com avaliacao das unhas, higienizacao, preparo da superficie, escolha do formato, aplicacao do produto adequado e finalizacao com cor, brilho ou decoracao.",
-  splitImage: "https://images.unsplash.com/photo-1632345031435-8727f6897d53?auto=format&fit=crop&w=900&q=85",
+  splitImage: "assets/site/split-placeholder.svg",
   portfolioEyebrow: "Portfolio",
   portfolioTitle: "Acabamentos para inspirar sua proxima escolha",
   feedTitle: "Acompanhe as novidades",
@@ -41,9 +41,9 @@ const DEFAULT_LANDING = {
   care4Title: "Respeite o prazo de manutencao",
   care4Text: "O retorno no periodo indicado preserva a estrutura e deixa o resultado sempre alinhado.",
   portfolioPhotos: [
-    { url: "https://images.unsplash.com/photo-1599206676335-193c82b13c9e?auto=format&fit=crop&w=700&q=85", caption: "Delicado e natural" },
-    { url: "https://images.unsplash.com/photo-1610992015732-2449b76344bc?auto=format&fit=crop&w=700&q=85", caption: "Cor e brilho" },
-    { url: "https://images.unsplash.com/photo-1519014816548-bf5fe059798b?auto=format&fit=crop&w=700&q=85", caption: "Classico elegante" },
+    { url: "assets/site/portfolio-placeholder.svg", caption: "Delicado e natural" },
+    { url: "assets/site/portfolio-placeholder.svg", caption: "Cor e brilho" },
+    { url: "assets/site/portfolio-placeholder.svg", caption: "Classico elegante" },
   ],
   feedPosts: [],
 };
@@ -63,9 +63,10 @@ function isFirebaseConfigured() {
 }
 
 function initLanding() {
+  // Mostrar conteúdo padrão inicialmente
   applyLandingContent(DEFAULT_LANDING);
   renderPortfolio(DEFAULT_LANDING.portfolioPhotos);
-  renderFeed(DEFAULT_LANDING.feedPosts);
+  // feed removido — não renderizar
 
   if (!isFirebaseConfigured() || window.location.protocol === "file:") return;
 
@@ -73,72 +74,41 @@ function initLanding() {
   db = firebase.firestore();
   docRef = db.doc(LANDING_DOC_PATH);
 
-  // Escutar mudanças em tempo real
-  docRef.onSnapshot((snapshot) => {
+  const applyRemoteSnapshot = (snapshot) => {
     if (!snapshot.exists) return;
     const data = snapshot.data() || {};
-    const remoteState = data.state || {};
+    const remoteState = data.state || data;
+
     // Mesclar settings (nome, logo, cores) com landingContent
     const settings = remoteState.settings || {};
+    const remoteContent = remoteState.landingContent || data.landingContent || {};
     const content = {
       ...DEFAULT_LANDING,
-      ...(remoteState.landingContent || {}),
+      ...remoteContent,
       // Propagar campos de settings para o site
       companyName: settings.companyName || DEFAULT_LANDING.heroTitle,
       subtitle: settings.subtitle || "Nail Design",
       logoText: settings.logoText || "",
       logoImage: settings.logoImage || "",
       colors: settings.colors || null,
+      // Garantir que imagens remotas sejam preservadas corretamente
+      heroImage: remoteContent.heroImage !== undefined ? remoteContent.heroImage : DEFAULT_LANDING.heroImage,
+      splitImage: remoteContent.splitImage !== undefined ? remoteContent.splitImage : DEFAULT_LANDING.splitImage,
     };
     landingContent = content;
     applyLandingContent(content);
     renderPortfolio(content.portfolioPhotos || DEFAULT_LANDING.portfolioPhotos);
-    renderFeed(content.feedPosts || []);
-    // Se o dialog de post estiver aberto, atualizar comentários em tempo real
-    if (activeFeedPostId) {
-      const post = (content.feedPosts || []).find((p) => p.id === activeFeedPostId);
-      if (post) renderFeedComments(post.comments || []);
-    }
-  }, (err) => console.error("Landing sync error:", err));
+  };
 
-  // Verificar se cliente está logado para permitir comentários
-  firebase.auth().onAuthStateChanged((user) => {
-    currentClientUser = user;
-    currentClientIsAdmin = false;
-    if (user) {
-      // Buscar dados do cliente e verificar se é admin
-      Promise.all([
-        docRef.get(),
-        db.collection("users").doc(user.uid).get(),
-      ]).then(([stateSnap, userSnap]) => {
-        const remoteState = stateSnap.data()?.state || {};
-        const clientes = Array.isArray(remoteState.clientes) ? remoteState.clientes : [];
-        currentClientData = clientes.find((c) => c.authUid === user.uid) ||
-          clientes.find((c) => c.email && user.email && c.email.toLowerCase() === user.email.toLowerCase()) || null;
-        // Admin = tem documento na coleção users com permissions.admin = true
-        if (userSnap.exists) {
-          const perms = userSnap.data()?.permissions || {};
-          currentClientIsAdmin = Boolean(perms.admin);
-        }
-        updateFeedCommentUI();
-      }).catch((err) => console.error("Landing auth error:", err));
-    } else {
-      currentClientData = null;
-      updateFeedCommentUI();
-    }
-  });
+  // Escutar mudanças em tempo real
+  docRef.onSnapshot(applyRemoteSnapshot, (err) => console.error("Landing sync error:", err));
 
-  // Fechar dialog
-  document.querySelector("#closeFeedDialog")?.addEventListener("click", () => {
-    document.querySelector("#feedPostDialog").close();
-    activeFeedPostId = null;
-  });
+  // Carregar uma vez imediatamente, caso o onSnapshot demore ou a atualização seja gerada antes da conexão
+  docRef.get()
+    .then(applyRemoteSnapshot)
+    .catch((err) => console.error("Landing fetch error:", err));
 
-  // Enviar comentário
-  document.querySelector("#feedCommentSubmit")?.addEventListener("click", submitFeedComment);
-  document.querySelector("#feedCommentInput")?.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submitFeedComment(); }
-  });
+  // feed/comment UI removed — nothing to initialize
 }
 
 function applyLandingContent(content) {
@@ -179,7 +149,7 @@ function applyLandingContent(content) {
   setImg("splitImage", content.splitImage);
   set("portfolioEyebrow", content.portfolioEyebrow);
   set("portfolioTitle", content.portfolioTitle);
-  set("feedTitle", content.feedTitle);
+  // feed removed
   set("careEyebrow", content.careEyebrow);
   set("careTitle", content.careTitle);
   set("care1Title", content.care1Title);
@@ -225,70 +195,17 @@ function renderPortfolio(photos) {
 }
 
 function renderFeed(posts) {
+  // feed removed — hide feed grid if present
   const grid = document.getElementById("feedGrid");
-  if (!grid) return;
-  if (!posts || !posts.length) {
-    grid.innerHTML = `<div class="feed-empty">Nenhuma publicação ainda.</div>`;
-    return;
-  }
-  grid.innerHTML = posts.map((post) => {
-    const commentCount = (post.comments || []).length;
-    return `
-      <article class="feed-card" data-post-id="${escapeHtml(post.id)}">
-        <div class="feed-card-media">
-          <img src="${escapeHtml(post.imageUrl || '')}" alt="${escapeHtml(post.caption || '')}" loading="lazy" />
-          <div class="feed-card-overlay">
-            <span>💬 ${commentCount}</span>
-          </div>
-        </div>
-        <div class="feed-card-body">
-          <p class="feed-card-caption">${escapeHtml(post.caption || "")}</p>
-          <span class="feed-card-date">${formatDate(post.createdAt)}</span>
-        </div>
-      </article>
-    `;
-  }).join("");
-
-  grid.querySelectorAll(".feed-card").forEach((card) => {
-    card.addEventListener("click", () => openFeedPost(card.dataset.postId));
-  });
+  if (grid) grid.style.display = "none";
 }
 
 function openFeedPost(postId) {
-  const posts = landingContent.feedPosts || [];
-  const post = posts.find((p) => p.id === postId);
-  if (!post) return;
-  activeFeedPostId = postId;
-
-  document.getElementById("feedPostImage").src = post.imageUrl || "";
-  document.getElementById("feedPostCaption").textContent = post.caption || "";
-  renderFeedComments(post.comments || []);
-  updateFeedCommentUI();
-  document.getElementById("feedPostDialog").showModal();
+  // feed removed
 }
 
 function renderFeedComments(comments) {
-  const list = document.getElementById("feedCommentsList");
-  if (!list) return;
-  if (!comments.length) {
-    list.innerHTML = `<div class="feed-no-comments">Seja o primeiro a comentar!</div>`;
-    return;
-  }
-  list.innerHTML = comments.map((c, i) => `
-    <div class="feed-comment" data-comment-index="${i}">
-      <div class="feed-comment-header">
-        <strong>${escapeHtml(c.authorName || "Cliente")}</strong>
-        <small>${formatDate(c.createdAt)}</small>
-        ${isAdminUser() ? `<button class="feed-delete-comment" data-comment-index="${i}" title="Excluir comentário" type="button">🗑</button>` : ""}
-      </div>
-      <span>${escapeHtml(c.text)}</span>
-    </div>
-  `).join("");
-  list.scrollTop = list.scrollHeight;
-
-  list.querySelectorAll(".feed-delete-comment").forEach((btn) => {
-    btn.addEventListener("click", () => deleteComment(Number(btn.dataset.commentIndex)));
-  });
+  // feed comments removed
 }
 
 function isAdminUser() {
@@ -296,89 +213,15 @@ function isAdminUser() {
 }
 
 async function deleteComment(commentIndex) {
-  if (!activeFeedPostId || !db) return;
-  if (!confirm("Excluir este comentário?")) return;
-  try {
-    await db.runTransaction(async (transaction) => {
-      const snapshot = await transaction.get(docRef);
-      const data = snapshot.data() || {};
-      const state = data.state || {};
-      const content = { ...DEFAULT_LANDING, ...(state.landingContent || {}) };
-      const posts = Array.isArray(content.feedPosts) ? content.feedPosts : [];
-      const postIndex = posts.findIndex((p) => p.id === activeFeedPostId);
-      if (postIndex === -1) return;
-      const comments = [...(posts[postIndex].comments || [])];
-      comments.splice(commentIndex, 1);
-      posts[postIndex].comments = comments;
-      content.feedPosts = posts;
-      transaction.set(docRef, {
-        state: { ...state, landingContent: content },
-        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-      }, { merge: true });
-      // Atualizar localmente
-      landingContent = content;
-      renderFeedComments(comments);
-    });
-  } catch (err) {
-    console.error("Erro ao excluir comentário:", err);
-    alert("Não foi possível excluir o comentário.");
-  }
+  // feed removed
 }
 
 function updateFeedCommentUI() {
-  const form = document.getElementById("feedCommentForm");
-  const loginMsg = document.getElementById("feedCommentLogin");
-  if (!form || !loginMsg) return;
-  if (currentClientUser && currentClientData) {
-    form.style.display = "flex";
-    loginMsg.style.display = "none";
-  } else {
-    form.style.display = "none";
-    loginMsg.style.display = "block";
-  }
-  // Re-renderizar comentários para mostrar/esconder botão de excluir do admin
-  if (activeFeedPostId) {
-    const posts = landingContent.feedPosts || [];
-    const post = posts.find((p) => p.id === activeFeedPostId);
-    if (post) renderFeedComments(post.comments || []);
-  }
+  // feed UI removed
 }
 
 async function submitFeedComment() {
-  if (!currentClientUser || !currentClientData || !activeFeedPostId || !db) return;
-  const input = document.getElementById("feedCommentInput");
-  const text = input.value.trim();
-  if (!text) return;
-
-  const comment = {
-    id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}`,
-    authorName: currentClientData.nome || currentClientUser.displayName || "Cliente",
-    authorUid: currentClientUser.uid,
-    text,
-    createdAt: new Date().toISOString(),
-  };
-
-  try {
-    await db.runTransaction(async (transaction) => {
-      const snapshot = await transaction.get(docRef);
-      const data = snapshot.data() || {};
-      const state = data.state || {};
-      const content = { ...DEFAULT_LANDING, ...(state.landingContent || {}) };
-      const posts = Array.isArray(content.feedPosts) ? content.feedPosts : [];
-      const postIndex = posts.findIndex((p) => p.id === activeFeedPostId);
-      if (postIndex === -1) throw new Error("Post não encontrado.");
-      posts[postIndex].comments = [...(posts[postIndex].comments || []), comment];
-      content.feedPosts = posts;
-      transaction.set(docRef, {
-        state: { ...state, landingContent: content },
-        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-      }, { merge: true });
-    });
-    input.value = "";
-  } catch (err) {
-    console.error("Erro ao comentar:", err);
-    alert("Não foi possível enviar o comentário.");
-  }
+  // feed removed
 }
 
 function formatDate(iso) {

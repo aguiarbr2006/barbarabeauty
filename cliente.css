@@ -1,4 +1,8 @@
 :root {
+  /* Foto usada no painel esquerdo da página de agendamento.
+     O cliente.js troca esse valor automaticamente pela mesma foto de fundo
+     cadastrada no editor da página principal. */
+  --client-hero-image: url("assets/site/hero-placeholder.svg");
   --sage: #6b8f71;
   --sage-dark: #314d3a;
   --clay: #b5694f;
@@ -100,6 +104,9 @@ a {
 }
 
 .intro-panel {
+  /* Este painel é a área visual da página de agendamento.
+     A foto vem da variável --client-hero-image, para ficar sincronizada
+     com a imagem de fundo da página principal. */
   position: sticky;
   top: 112px;
   min-height: 520px;
@@ -109,7 +116,7 @@ a {
   color: white;
   background:
     linear-gradient(180deg, rgba(32, 31, 27, 0.18), rgba(32, 31, 27, 0.76)),
-    url("https://images.unsplash.com/photo-1604654894610-df63bc536371?auto=format&fit=crop&w=1100&q=85") center/cover;
+    var(--client-hero-image) center/cover;
   border-radius: 8px;
   box-shadow: var(--shadow);
 }

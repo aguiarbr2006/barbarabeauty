@@ -6,9 +6,9 @@ const currency = new Intl.NumberFormat("pt-BR", {
 });
 
 const DEFAULT_SETTINGS = {
-  companyName: "Barbara Beauty",
+  companyName: "Rayssa Oliveira",
   subtitle: "Nail designer",
-  logoText: "B",
+  logoText: "R",
   logoImage: "",
   telefoneContato: "",
   instagram: "",
@@ -24,17 +24,22 @@ const DEFAULT_SETTINGS = {
     debito: 1.99,
     credito: 4.99,
   },
+  openingTime: "08:00",
+  closingTime: "19:00",
+  lunchStart: "12:00",
+  lunchEnd: "13:00",
 };
 
 function defaultSettings() {
   return JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
 }
 
-const hasSavedState = Boolean(localStorage.getItem(STORAGE_KEY));
+const hasSavedState = false; // do not rely on localStorage for state persistence
 const state = loadState();
 
 let remoteDb = null;
 let remoteDocRef = null;
+let remoteStorage = null;
 let remoteReady = false;
 let applyingRemoteState = false;
 let pendingRemoteSave = null;
@@ -44,6 +49,26 @@ let currentUser = null;
 let userPermissions = {};
 let afterPaymentSaveCallback = null;
 const APPOINTMENT_STATUSES = ["Pendente confirmação", "Agendado", "Confirmado", "Concluído", "Cancelado"];
+
+// Persistência de sessão: 4 horas
+const SESSION_DURATION = 4 * 60 * 60 * 1000; // 4 horas em milissegundos
+const SESSION_STORAGE_KEY = "nailpro-session-timestamp";
+
+function registerSessionLogin() {
+  localStorage.setItem(SESSION_STORAGE_KEY, Date.now().toString());
+}
+
+function isSessionValid() {
+  const timestamp = localStorage.getItem(SESSION_STORAGE_KEY);
+  if (!timestamp) return false;
+  const loginTime = parseInt(timestamp, 10);
+  const now = Date.now();
+  return (now - loginTime) < SESSION_DURATION;
+}
+
+function clearSessionLogin() {
+  localStorage.removeItem(SESSION_STORAGE_KEY);
+}
 
 const pages = {
   dashboard: {
@@ -89,8 +114,7 @@ const pages = {
 };
 
 function loadState() {
-  const saved = localStorage.getItem(STORAGE_KEY);
-  if (saved) return JSON.parse(saved);
+  // Persistência local desativada: sempre inicializa a partir do estado padrão/remote
 
   const now = new Date();
   const date = toDateInput(now);
@@ -194,8 +218,12 @@ function id() {
 }
 
 function save() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  queueRemoteSave();
+  // Persist only to remote Firestore (do not write to localStorage)
+  if (remoteDocRef && !remoteReady) {
+    queueRemoteSave(true);
+  } else {
+    queueRemoteSave();
+  }
 }
 
 function serializableState() {
@@ -211,13 +239,17 @@ function serializableState() {
 }
 
 function replaceState(nextState) {
-  state.settings = nextState.settings || defaultSettings();
-  state.clientes = Array.isArray(nextState.clientes) ? nextState.clientes : [];
-  state.servicos = Array.isArray(nextState.servicos) ? nextState.servicos : [];
-  state.agendamentos = Array.isArray(nextState.agendamentos) ? nextState.agendamentos : [];
-  state.pacotes = Array.isArray(nextState.pacotes) ? nextState.pacotes : [];
-  state.financeiro = Array.isArray(nextState.financeiro) ? nextState.financeiro : [];
-  state.landingContent = nextState.landingContent || {};
+  state.settings = {
+    ...defaultSettings(),
+    ...(state.settings || {}),
+    ...(nextState.settings || {}),
+  };
+  state.clientes = Array.isArray(nextState.clientes) ? nextState.clientes : (state.clientes || []);
+  state.servicos = Array.isArray(nextState.servicos) ? nextState.servicos : (state.servicos || []);
+  state.agendamentos = Array.isArray(nextState.agendamentos) ? nextState.agendamentos : (state.agendamentos || []);
+  state.pacotes = Array.isArray(nextState.pacotes) ? nextState.pacotes : (state.pacotes || []);
+  state.financeiro = Array.isArray(nextState.financeiro) ? nextState.financeiro : (state.financeiro || []);
+  state.landingContent = nextState.landingContent !== undefined ? nextState.landingContent : (state.landingContent || {});
   migrateState();
 }
 
@@ -250,27 +282,48 @@ async function initAuth() {
       );
       return;
     }
-    
-    // Criar conta admin padrão se não existir
-    await createDefaultAdminAccount();
-    
+
+    // Garantir aliases de login em background (não bloqueia autenticação)
+    ensureLoginAliasesInBackground();
+
+    // Listener de autenticação — única fonte de verdade
     firebase.auth().onAuthStateChanged(async (user) => {
       if (user) {
         currentUser = user;
+        registerSessionLogin();
         await loadUserPermissions(user.uid);
         initRemoteSync();
         showApp();
         renderAll();
       } else {
         currentUser = null;
+        userPermissions = {};
         stopRemoteSync();
         showLogin();
       }
     });
+
   } catch (error) {
     console.error("Erro ao inicializar autenticação:", error);
     showApp();
   }
+}
+
+/**
+ * Garante que os aliases de login (username → email) estejam sincronizados
+ * no Firestore. Roda em background sem bloquear o carregamento.
+ */
+function ensureLoginAliasesInBackground() {
+  setTimeout(async () => {
+    try {
+      if (!firebase.apps.length) return;
+      if (!remoteDb) remoteDb = firebase.firestore();
+      await ensureAllLoginAliases();
+    } catch (e) {
+      // Silencioso — não crítico para o funcionamento
+      console.info("Aliases de login não sincronizados:", e.message);
+    }
+  }, 3000); // aguarda 3s para não competir com o carregamento inicial
 }
 
 async function createDefaultAdminAccount() {
@@ -405,24 +458,40 @@ async function handleLogin() {
 
   setLoginError("");
 
+  if (!identifier || !password) {
+    setLoginError("Informe o usuário/email e a senha.");
+    return;
+  }
+
+  // Desabilitar botão durante o processo
+  const btn = document.querySelector("#loginSubmitButton");
+  if (btn) { btn.disabled = true; btn.textContent = "Entrando..."; }
+
   try {
     const email = await resolveLoginEmail(identifier);
     await firebase.auth().signInWithEmailAndPassword(email, password);
+    // onAuthStateChanged cuida do resto (showApp, renderAll, etc.)
     document.querySelector("#loginForm").reset();
   } catch (error) {
-    let errorMessage = error.message || "Erro ao fazer login";
+    let errorMessage = "Não foi possível fazer login. Verifique suas credenciais.";
 
     if (error.code === "auth/configuration-not-found") {
       errorMessage = "Firebase Authentication não está habilitado. Acesse o console do Firebase para habilitar.";
-    } else if (error.code === "auth/user-not-found") {
+    } else if (error.code === "auth/user-not-found" || error.code === "auth/invalid-credential") {
       errorMessage = "Usuário não encontrado. Verifique o usuário ou email digitado.";
     } else if (error.code === "auth/wrong-password") {
       errorMessage = "Senha incorreta. Tente novamente.";
     } else if (error.code === "auth/invalid-email") {
       errorMessage = "Email inválido. Verifique o formato.";
+    } else if (error.code === "auth/too-many-requests") {
+      errorMessage = "Muitas tentativas. Aguarde alguns minutos e tente novamente.";
+    } else if (error.message) {
+      errorMessage = error.message;
     }
 
     setLoginError(errorMessage);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "Entrar"; }
   }
 }
 
@@ -456,6 +525,7 @@ function setLoginError(message) {
 
 async function handleLogout() {
   try {
+    clearSessionLogin(); // Limpar a sessão
     await firebase.auth().signOut();
     currentUser = null;
     userPermissions = {};
@@ -487,11 +557,11 @@ function initRemoteSync() {
           return;
         }
 
-        const data = snapshot.data();
-        if (!data?.state) return;
+        const data = snapshot.data() || {};
+        const remoteState = data.state || data;
         applyingRemoteState = true;
-        replaceState(data.state);
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+        replaceState(remoteState);
+        // Do not persist to localStorage; rely on remote only
         applyingRemoteState = false;
         remoteReady = true;
         renderAll();
@@ -646,6 +716,10 @@ function renderAdminSettings() {
   document.querySelector("#settingAlert").value = settings.colors.alert || DEFAULT_SETTINGS.colors.alert;
   document.querySelector("#taxaDebito").value = settings.taxas.debito;
   document.querySelector("#taxaCredito").value = settings.taxas.credito;
+  document.querySelector("#settingOpeningTime").value = settings.openingTime || "08:00";
+  document.querySelector("#settingClosingTime").value = settings.closingTime || "19:00";
+  document.querySelector("#settingLunchStart").value = settings.lunchStart || "12:00";
+  document.querySelector("#settingLunchEnd").value = settings.lunchEnd || "13:00";
   document.querySelector("#settingDeveloperCredit").value = settings.developerCredit;
   document.querySelector("#adminNamePreview").textContent = companyName();
   document.querySelector("#adminSubtitlePreview").textContent = settings.subtitle;
@@ -664,6 +738,24 @@ function stopRemoteSync() {
   }
   remoteDocRef = null;
   remoteReady = false;
+}
+
+function getFirebaseStorage() {
+  if (!isFirebaseConfigured()) throw new Error("Firebase não configurado.");
+  if (!firebase.apps.length) firebase.initializeApp(window.FIREBASE_CONFIG);
+  if (!remoteStorage) remoteStorage = firebase.storage();
+  return remoteStorage;
+}
+
+async function uploadLandingImageFile(file, folder = "landing") {
+  if (!file) throw new Error("Arquivo de imagem inválido.");
+  const storage = getFirebaseStorage();
+  const extension = (file.name.split(".").pop() || "jpg").toLowerCase();
+  const safeFileName = `${Date.now()}-${crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2)}.${extension}`;
+  const path = `${folder}/${safeFileName}`;
+  const ref = storage.ref(path);
+  const snapshot = await ref.put(file);
+  return await snapshot.ref.getDownloadURL();
 }
 
 function toDateInput(date) {
@@ -722,6 +814,7 @@ function setPage(pageName) {
   document.querySelectorAll(".nav-item").forEach((item) => {
     item.classList.toggle("active", item.dataset.page === pageName);
   });
+  renderAll();
 }
 
 function calculateFinalValue(price, type, discountValue) {
@@ -751,41 +844,243 @@ function calculatePaymentValues(value, method, discountType = "nenhum", discount
   return { rate, taxAmount, discountAmount, grossValue, netValue };
 }
 
-function getSelectedService() {
-  return state.servicos.find((service) => service.id === document.querySelector("#appointmentService").value);
+// ─────────────────────────────────────────────────────────────────────────
+// MÓDULO DE AGENDAMENTOS — lista dinâmica de serviços (múltiplos serviços)
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Retorna os serviços atualmente selecionados na lista dinâmica do modal.
+ * Cada linha tem um select com o serviceId selecionado.
+ */
+function getSelectedServiceLines() {
+  return Array.from(document.querySelectorAll(".service-line-select"))
+    .map((sel) => state.servicos.find((s) => s.id === sel.value))
+    .filter(Boolean);
 }
 
-function getSelectedService2() {
-  return state.servicos.find((service) => service.id === document.querySelector("#appointmentService2").value);
+/**
+ * Renderiza as linhas de serviço no modal de agendamento.
+ * @param {Array} serviceIds - array de IDs de serviços a pré-selecionar
+ */
+function renderServiceLines(serviceIds = [""]) {
+  const container = document.querySelector("#servicesList");
+  if (!container) return;
+
+  const activeServices = state.servicos.filter((s) => s.ativo !== false);
+  const options = activeServices
+    .map((s) => `<option value="${s.id}">${escapeHtml(s.nome)} · ${money(s.valorPadrao)} · ${s.duracaoMinutos}min</option>`)
+    .join("");
+
+  // Garante pelo menos uma linha
+  const ids = serviceIds.length ? serviceIds : [""];
+
+  container.innerHTML = ids.map((sid, i) => `
+    <div class="service-line" data-service-line="${i}">
+      <label style="grid-column:1/-1;display:grid;grid-template-columns:1fr auto;gap:8px;align-items:end">
+        Serviço ${i + 1}
+        <button type="button" class="icon-button remove-service-line" data-line="${i}"
+          style="width:36px;height:36px;font-size:1.1rem;color:var(--danger)"
+          ${ids.length === 1 ? "disabled title='Pelo menos 1 serviço obrigatório'" : "title='Remover serviço'"}>✕</button>
+      </label>
+      <select class="service-line-select" data-line="${i}">
+        <option value="">Selecione</option>
+        ${options}
+      </select>
+    </div>
+  `).join("");
+
+  // Pré-selecionar valores
+  ids.forEach((sid, i) => {
+    const sel = container.querySelector(`[data-line="${i}"].service-line-select`);
+    if (sel && sid) sel.value = sid;
+  });
+
+  // Bind: ao trocar serviço, recalcular valor e tempo
+  container.querySelectorAll(".service-line-select").forEach((sel) => {
+    sel.addEventListener("change", recalcFromServices);
+  });
+
+  // Bind: remover linha
+  container.querySelectorAll(".remove-service-line").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const current = Array.from(document.querySelectorAll(".service-line-select")).map((s) => s.value);
+      current.splice(Number(btn.dataset.line), 1);
+      renderServiceLines(current.length ? current : [""]);
+      recalcFromServices();
+    });
+  });
 }
 
-function getSelectedServices() {
-  return [getSelectedService(), getSelectedService2()].filter(Boolean);
+/**
+ * Adiciona uma linha em branco de serviço.
+ */
+function addServiceLine() {
+  const current = Array.from(document.querySelectorAll(".service-line-select")).map((s) => s.value);
+  renderServiceLines([...current, ""]);
 }
 
-function updateAppointmentEndFromService() {
-  const services = getSelectedServices();
-  const startValue = document.querySelector("#appointmentStart").value;
-  if (!services.length || !startValue) return;
-  const start = parseDate(startValue);
-  const duration = services.reduce((total, service) => total + Number(service.duracaoMinutos || 0), 0);
-  const end = new Date(start.getTime() + duration * 60000);
-  document.querySelector("#appointmentEnd").value = toDateTimeInput(end);
-}
+/**
+ * Recalcula o valor total e atualiza o horário de fim com base
+ * na soma das durações de todos os serviços selecionados.
+ */
+function recalcFromServices() {
+  const services = getSelectedServiceLines();
+  const totalValue = services.reduce((sum, s) => sum + Number(s.valorPadrao || 0), 0);
+  const totalMinutes = services.reduce((sum, s) => sum + Number(s.duracaoMinutos || 0), 0);
 
-function updateAppointmentPriceFromServices() {
-  const services = getSelectedServices();
-  const total = services.reduce((sum, service) => sum + Number(service.valorPadrao || 0), 0);
-  document.querySelector("#appointmentPrice").value = total || "";
-  updateAppointmentEndFromService();
+  // Atualizar valor (só se modo normal, não pacote)
+  if (!document.querySelector("#usePackage")?.checked) {
+    document.querySelector("#appointmentPrice").value = totalValue || "";
+  }
+
+  // Atualizar horário de fim
+  const startVal = document.querySelector("#appointmentStart").value;
+  if (startVal && totalMinutes > 0) {
+    const start = parseDate(startVal);
+    const end = new Date(start.getTime() + totalMinutes * 60000);
+    document.querySelector("#appointmentEnd").value = toDateTimeInput(end);
+  }
+
   updateFinalPreview();
 }
 
+/**
+ * Nome composto dos serviços para exibição no card de agendamento.
+ */
 function appointmentServiceName(appointment) {
-  const serviceName = [appointment.nomeServico, appointment.nomeServico2].filter(Boolean).join(" + ");
-  if (serviceName) return serviceName;
+  // Novo formato: array de serviços
+  if (Array.isArray(appointment.servicos) && appointment.servicos.length) {
+    return appointment.servicos.map((s) => s.nome).join(" + ");
+  }
+  // Compatibilidade com formato antigo (servicoId / servicoId2)
+  const parts = [appointment.nomeServico, appointment.nomeServico2].filter(Boolean);
+  if (parts.length) return parts.join(" + ");
   if (appointment.usarPacote) return packageCreditLabel(appointment.servicoCreditoPacoteId || appointment.tipoCreditoPacote);
   return "Serviço não informado";
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// MÓDULO PACOTES × AGENDAMENTOS — créditos múltiplos no mesmo atendimento
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Renderiza as linhas de crédito do pacote a consumir no agendamento.
+ * Permite selecionar múltiplos créditos do mesmo pacote.
+ */
+function renderPackageCreditLines(pacoteId, existingCredits = []) {
+  const container = document.querySelector("#packageCreditsContainer");
+  const summary = document.querySelector("#packageCreditSummary");
+  if (!container) return;
+
+  const pacote = state.pacotes.find((p) => p.id === pacoteId);
+  if (!pacote) { container.innerHTML = ""; if (summary) summary.style.display = "none"; return; }
+
+  const appointmentId = document.querySelector("#appointmentId").value;
+
+  const creditOptions = (pacote.creditos || []).map((credit) => {
+    const disponivel = packageAvailability(pacoteId, credit.servicoId, appointmentId);
+    return `<option value="${credit.servicoId}" ${disponivel <= 0 ? "disabled" : ""}>
+      ${escapeHtml(credit.nomeServico || packageCreditLabel(credit.servicoId))} (${disponivel} disponível)
+    </option>`;
+  }).join("");
+
+  // Uma linha por crédito a consumir; começa com 1 linha pré-selecionada
+  const lines = existingCredits.length ? existingCredits : [{ servicoId: "", qty: 1 }];
+
+  container.innerHTML = `
+    <div style="display:grid;gap:8px">
+      <div class="package-services-title">Créditos a consumir neste atendimento</div>
+      ${lines.map((line, i) => `
+        <div class="package-credit-line" style="display:grid;grid-template-columns:1fr 80px auto;gap:8px;align-items:end">
+          <label>Serviço do pacote
+            <select class="pkg-credit-select" data-credit-line="${i}">
+              <option value="">Selecione</option>${creditOptions}
+            </select>
+          </label>
+          <label>Qtd.
+            <input type="number" class="pkg-credit-qty" data-credit-line="${i}"
+              value="${line.qty || 1}" min="1" step="1" style="text-align:center" />
+          </label>
+          <button type="button" class="icon-button remove-credit-line" data-credit-line="${i}"
+            style="width:36px;height:36px;color:var(--danger);margin-top:20px"
+            ${lines.length === 1 ? "disabled" : ""}>✕</button>
+        </div>
+      `).join("")}
+      <button type="button" class="ghost-button" id="addCreditLine" style="width:auto">+ Adicionar crédito</button>
+    </div>
+  `;
+
+  // Pré-selecionar créditos existentes
+  lines.forEach((line, i) => {
+    const sel = container.querySelector(`[data-credit-line="${i}"].pkg-credit-select`);
+    if (sel && line.servicoId) sel.value = line.servicoId;
+  });
+
+  // Bind: atualizar resumo ao mudar seleção
+  container.querySelectorAll(".pkg-credit-select, .pkg-credit-qty").forEach((el) => {
+    el.addEventListener("change", updatePackageCreditSummary);
+  });
+
+  // Bind: remover linha de crédito
+  container.querySelectorAll(".remove-credit-line").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const current = readPackageCreditLines();
+      current.splice(Number(btn.dataset.creditLine), 1);
+      renderPackageCreditLines(pacoteId, current.length ? current : [{ servicoId: "", qty: 1 }]);
+      updatePackageCreditSummary();
+    });
+  });
+
+  // Bind: adicionar linha
+  container.querySelector("#addCreditLine")?.addEventListener("click", () => {
+    const current = readPackageCreditLines();
+    renderPackageCreditLines(pacoteId, [...current, { servicoId: "", qty: 1 }]);
+    updatePackageCreditSummary();
+  });
+
+  updatePackageCreditSummary();
+}
+
+/**
+ * Lê as linhas de crédito do pacote preenchidas no modal.
+ */
+function readPackageCreditLines() {
+  const lines = [];
+  document.querySelectorAll(".pkg-credit-select").forEach((sel, i) => {
+    const qty = Number(document.querySelectorAll(".pkg-credit-qty")[i]?.value || 1);
+    lines.push({ servicoId: sel.value, qty });
+  });
+  return lines;
+}
+
+/**
+ * Atualiza o resumo de créditos (antes/depois) no modal.
+ */
+function updatePackageCreditSummary() {
+  const summary = document.querySelector("#packageCreditSummary");
+  if (!summary) return;
+  const pacoteId = document.querySelector("#appointmentPackage").value;
+  const pacote = state.pacotes.find((p) => p.id === pacoteId);
+  if (!pacote) { summary.style.display = "none"; return; }
+
+  const lines = readPackageCreditLines().filter((l) => l.servicoId);
+  if (!lines.length) { summary.style.display = "none"; return; }
+
+  const appointmentId = document.querySelector("#appointmentId").value;
+
+  const rows = lines.map((line) => {
+    const credit = pacote.creditos?.find((c) => c.servicoId === line.servicoId);
+    if (!credit) return "";
+    const disponivel = packageAvailability(pacoteId, line.servicoId, appointmentId);
+    const aposUso = disponivel - line.qty;
+    return `<div style="display:flex;justify-content:space-between;font-size:0.88rem">
+      <span>${escapeHtml(credit.nomeServico || packageCreditLabel(credit.servicoId))}</span>
+      <span>Disponível: <strong>${disponivel}</strong> → Após: <strong class="${aposUso < 0 ? "text-danger" : ""}">${aposUso}</strong></span>
+    </div>`;
+  }).filter(Boolean).join("");
+
+  summary.style.display = rows ? "block" : "none";
+  summary.innerHTML = `<strong>Resumo de créditos</strong>${rows}`;
 }
 
 function ensureServiceForLegacyPackage(name) {
@@ -858,25 +1153,42 @@ function packageCreditsSummary(pacote) {
 
 function recomputePackageUsage() {
   if (!state.pacotes) return;
+
+  // Zerar contagem de uso
   state.pacotes.forEach((pacote) => {
     (pacote.creditos || []).forEach((credit) => {
       credit.usado = 0;
       credit.nomeServico = credit.nomeServico || serviceNameById(credit.servicoId);
     });
   });
+
+  // Recontabilizar a partir dos agendamentos concluídos
   state.agendamentos
-    .filter((appointment) => appointment.status === "Concluído" && appointment.usarPacote && appointment.pacoteId)
-    .forEach((appointment) => {
-      const pacote = state.pacotes.find((item) => item.id === appointment.pacoteId);
+    .filter((a) => a.status === "Concluído" && a.usarPacote && a.pacoteId)
+    .forEach((a) => {
+      const pacote = state.pacotes.find((p) => p.id === a.pacoteId);
       if (!pacote) return;
-      const serviceId = appointment.servicoCreditoPacoteId || appointment.tipoCreditoPacote;
-      const credit = pacote.creditos?.find((item) => item.servicoId === serviceId);
-      if (credit) credit.usado += 1;
+
+      // Novo formato: múltiplos créditos por agendamento
+      if (Array.isArray(a.creditosConsumidos) && a.creditosConsumidos.length) {
+        a.creditosConsumidos.forEach(({ servicoId, qty }) => {
+          const credit = pacote.creditos?.find((c) => c.servicoId === servicoId);
+          if (credit) credit.usado += Number(qty || 1);
+        });
+      } else {
+        // Compatibilidade com formato antigo (1 crédito por agendamento)
+        const serviceId = a.servicoCreditoPacoteId || a.tipoCreditoPacote;
+        const credit = pacote.creditos?.find((c) => c.servicoId === serviceId);
+        if (credit) credit.usado += 1;
+      }
     });
+
+  // Atualizar status dos pacotes
   state.pacotes.forEach((pacote) => {
-    if (pacote.status === "excluido") return;
-    const finished = (pacote.creditos || []).length > 0 && pacote.creditos.every((credit) => packageRemaining(pacote, credit.servicoId) <= 0);
-    pacote.status = finished ? "finalizado" : "ativo";
+    if (pacote.status === "excluido" || pacote.status === "cancelado") return;
+    const allZero = (pacote.creditos || []).length > 0 &&
+      pacote.creditos.every((c) => packageRemaining(pacote, c.servicoId) <= 0);
+    pacote.status = allZero ? "finalizado" : "ativo";
   });
 }
 
@@ -921,23 +1233,21 @@ function syncPackageFinance(pacote) {
 function deletePackage(packageId, closeModal = false) {
   const pacote = state.pacotes.find((item) => item.id === packageId);
   if (!pacote) return;
-  if (!confirm("Deseja realmente excluir este pacote?")) return;
   const linkedAppointments = state.agendamentos.filter((appointment) => appointment.pacoteId === packageId);
-  const removeLinked = linkedAppointments.length
-    ? confirm(`Este pacote tem ${linkedAppointments.length} agendamento(s) vinculado(s). Deseja excluir esses agendamentos também? Clique em Cancelar para manter os agendamentos e remover apenas o vínculo com o pacote.`)
-    : false;
-  state.pacotes = state.pacotes.filter((item) => item.id !== packageId);
-  if (removeLinked) {
-    linkedAppointments.forEach((appointment) => deleteAppointmentById(appointment.id));
-  } else {
-    linkedAppointments.forEach((appointment) => {
-      appointment.pacoteId = "";
-      appointment.usarPacote = false;
-      appointment.statusPagamento = "pendente";
-      appointment.financeiroGerado = false;
-    });
+  const linkedFinance = state.financeiro.filter((f) => f.pacoteId === packageId);
+  if (linkedAppointments.length > 0 || linkedFinance.length > 0) {
+    const msg = [
+      "Não é possível excluir este pacote pois ele possui:",
+      linkedAppointments.length > 0 ? `• ${linkedAppointments.length} agendamento(s) vinculado(s)` : "",
+      linkedFinance.length > 0 ? `• ${linkedFinance.length} lançamento(s) financeiro(s)` : "",
+      "",
+      "Use o botão 'Cancelar pacote' para encerrar sem perder o histórico.",
+    ].filter(Boolean).join("\n");
+    alert(msg);
+    return;
   }
-  state.financeiro = state.financeiro.filter((entry) => !(entry.origem === "pacote" && entry.pacoteId === packageId));
+  if (!confirm(`Excluir o pacote "${pacote.nome}"? Esta ação não pode ser desfeita.`)) return;
+  state.pacotes = state.pacotes.filter((item) => item.id !== packageId);
   recomputePackageUsage();
   save();
   if (closeModal) document.querySelector("#packageModal").close();
@@ -1136,8 +1446,10 @@ function renderDashboard() {
     : empty("Nenhum agendamento para hoje.");
 }
 
+let currentCalendarMonth = new Date();
+
 function renderMonthCalendar() {
-  const now = new Date();
+  const now = currentCalendarMonth;
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
   const gridStart = new Date(monthStart);
   gridStart.setDate(monthStart.getDate() - monthStart.getDay());
@@ -1146,34 +1458,58 @@ function renderMonthCalendar() {
   gridEnd.setDate(lastDay.getDate() + (6 - lastDay.getDay()));
   const today = toDateInput(new Date());
   const dayNames = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+  const months = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
   const totalDays = Math.round((gridEnd - gridStart) / 86400000) + 1;
   const days = Array.from({ length: totalDays }, (_, index) => {
     const date = new Date(gridStart);
     date.setDate(gridStart.getDate() + index);
     return date;
   });
+  
+  const monthHeader = `${months[now.getMonth()]} ${now.getFullYear()}`;
+  const daysHtml = days.map((date) => {
+    const key = toDateInput(date);
+    const outside = date.getMonth() !== now.getMonth();
+    const appointments = state.agendamentos
+      .filter((appointment) => toDateInput(appointment.dataHoraInicio) === key)
+      .sort((a, b) => a.dataHoraInicio.localeCompare(b.dataHoraInicio));
+    return `
+      <article class="month-day ${key === today ? "today" : ""} ${outside ? "outside" : ""}">
+        <header>${dayNames[date.getDay()]}<small>${date.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })}</small></header>
+        <div class="month-slots">
+          ${
+            appointments.length
+              ? appointments.map(monthEvent).join("")
+              : `<div class="muted">Livre</div>`
+          }
+        </div>
+      </article>
+    `;
+  }).join("");
+  
+  const prevBtn = `<button class="calendar-nav-btn" onclick="previousCalendarMonth()">← Anterior</button>`;
+  const nextBtn = `<button class="calendar-nav-btn" onclick="nextCalendarMonth()">Próximo →</button>`;
+  
+  document.querySelector("#monthCalendar").innerHTML = `
+    <div class="calendar-header">
+      ${prevBtn}
+      <h3 class="month-header">${monthHeader}</h3>
+      ${nextBtn}
+    </div>
+    <div class="month-grid">
+      ${daysHtml}
+    </div>
+  `;
+}
 
-  document.querySelector("#monthCalendar").innerHTML = days
-    .map((date, index) => {
-      const key = toDateInput(date);
-      const outside = date.getMonth() !== now.getMonth();
-      const appointments = state.agendamentos
-        .filter((appointment) => toDateInput(appointment.dataHoraInicio) === key)
-        .sort((a, b) => a.dataHoraInicio.localeCompare(b.dataHoraInicio));
-      return `
-        <article class="month-day ${key === today ? "today" : ""} ${outside ? "outside" : ""}">
-          <header>${dayNames[date.getDay()]}<small>${date.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })}</small></header>
-          <div class="month-slots">
-            ${
-              appointments.length
-                ? appointments.map(monthEvent).join("")
-                : `<div class="muted">Livre</div>`
-            }
-          </div>
-        </article>
-      `;
-    })
-    .join("");
+function previousCalendarMonth() {
+  currentCalendarMonth = new Date(currentCalendarMonth.getFullYear(), currentCalendarMonth.getMonth() - 1);
+  renderMonthCalendar();
+}
+
+function nextCalendarMonth() {
+  currentCalendarMonth = new Date(currentCalendarMonth.getFullYear(), currentCalendarMonth.getMonth() + 1);
+  renderMonthCalendar();
 }
 
 function monthEvent(appointment) {
@@ -1527,28 +1863,187 @@ function deleteEmployee(employeeId) {
   });
 }
 
+// ─────────────────────────────────────────────────────────────
+// MÓDULO DE PACOTES — funções de renderização e gerenciamento
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Retorna o histórico de uso de um pacote: agendamentos concluídos
+ * que consumiram créditos deste pacote.
+ */
+function getPackageHistory(pacoteId) {
+  return state.agendamentos
+    .filter((a) => a.usarPacote && a.pacoteId === pacoteId && a.status === "Concluído")
+    .sort((a, b) => b.dataHoraInicio.localeCompare(a.dataHoraInicio));
+}
+
+/**
+ * Renderiza o card de cada pacote na lista, exibindo créditos detalhados,
+ * datas, status e histórico resumido.
+ */
 function packageCard(pacote) {
-  const validade = pacote.validade ? ` · validade ${new Date(`${pacote.validade}T00:00`).toLocaleDateString("pt-BR")}` : "";
-  const credits = (pacote.creditos || [])
-    .map((credit) => `<div>${escapeHtml(credit.nomeServico || packageCreditLabel(credit.servicoId))}: <strong>${packageRemaining(pacote, credit.servicoId)}</strong> de ${credit.quantidade} crédito(s)</div>`)
-    .join("");
+  const validade = pacote.validade
+    ? new Date(`${pacote.validade}T00:00`).toLocaleDateString("pt-BR")
+    : "Sem validade";
+  const dataCompra = pacote.dataCompra
+    ? new Date(pacote.dataCompra).toLocaleDateString("pt-BR")
+    : "—";
+
+  // Monta linhas de crédito: total / usado / restante
+  const credits = (pacote.creditos || []).map((credit) => {
+    const restante = packageRemaining(pacote, credit.servicoId);
+    const usado = Number(credit.usado || 0);
+    return `<div class="package-credit-row">
+      <span>${escapeHtml(credit.nomeServico || packageCreditLabel(credit.servicoId))}</span>
+      <span class="package-credit-nums">
+        Total: <strong>${credit.quantidade}</strong> ·
+        Usado: <strong>${usado}</strong> ·
+        Restante: <strong class="${restante === 0 ? "text-danger" : ""}">${restante}</strong>
+      </span>
+    </div>`;
+  }).join("");
+
+  // Badge de status com cor
+  const statusClass = pacote.status === "ativo" ? "concluido"
+    : pacote.status === "finalizado" ? "pendente-confirmacao"
+    : "cancelado"; // cancelado
+
   return `
     <article class="item-card">
       <div class="item-row">
         <div>
           <h3 class="item-title">${escapeHtml(pacote.nome)}</h3>
-          <div class="muted">${escapeHtml(pacote.nomeCliente)}${validade}</div>
+          <div class="muted">${escapeHtml(pacote.nomeCliente)}</div>
         </div>
-        <span class="badge ${pacote.status === "finalizado" ? "concluido" : ""}">${pacote.status}</span>
+        <span class="badge ${statusClass}">${pacote.status}</span>
+      </div>
+      <div class="muted" style="font-size:0.85rem">
+        Criado em: ${dataCompra} · Validade: ${validade}
       </div>
       <div>Valor pago: <strong>${money(pacote.valorPago)}</strong></div>
-      ${credits || `<div class="muted">Nenhum crédito configurado.</div>`}
+      <div class="package-credits-list">
+        ${credits || `<div class="muted">Nenhum crédito configurado.</div>`}
+      </div>
       <div class="actions">
-        <button class="ghost-button" data-edit-package="${pacote.id}">Editar</button>
-        <button class="danger-button" data-delete-package="${pacote.id}">Excluir pacote</button>
+        <button class="ghost-button" data-edit-package="${pacote.id}">Editar / Histórico</button>
+        ${pacote.status === "ativo" ? `<button class="ghost-button" data-cancel-package="${pacote.id}">Cancelar</button>` : ""}
+        <button class="danger-button" data-delete-package="${pacote.id}">Excluir</button>
       </div>
     </article>
   `;
+}
+
+/**
+ * Renderiza a lista de pacotes aplicando filtros de busca e status.
+ */
+function renderPackages() {
+  const search = normalize(document.querySelector("#packageSearch")?.value || "");
+  const statusFilter = document.querySelector("#packageStatusFilter")?.value || "ativos";
+
+  const filtered = state.pacotes
+    .filter((pacote) => {
+      // Filtro de status
+      if (statusFilter === "ativos") return pacote.status === "ativo";
+      if (statusFilter === "todos") return pacote.status !== "excluido";
+      return pacote.status === statusFilter;
+    })
+    .filter((pacote) => !search || normalize(`${pacote.nome} ${pacote.nomeCliente}`).includes(search))
+    .sort((a, b) => String(b.dataCompra || "").localeCompare(String(a.dataCompra || "")));
+
+  document.querySelector("#packageList").innerHTML = filtered.length
+    ? filtered.map(packageCard).join("")
+    : empty("Nenhum pacote encontrado para o filtro selecionado.");
+
+  // Bind botões de editar
+  document.querySelectorAll("[data-edit-package]").forEach((btn) => {
+    btn.addEventListener("click", () => openPackage(btn.dataset.editPackage));
+  });
+
+  // Bind botões de cancelar pacote
+  document.querySelectorAll("[data-cancel-package]").forEach((btn) => {
+    btn.addEventListener("click", () => cancelPackage(btn.dataset.cancelPackage));
+  });
+}
+
+/**
+ * Cancela manualmente um pacote (muda status para "cancelado").
+ * Não exclui nem remove dados históricos.
+ */
+function cancelPackage(packageId) {
+  const pacote = state.pacotes.find((p) => p.id === packageId);
+  if (!pacote) return;
+  if (!confirm(`Deseja cancelar o pacote "${pacote.nome}" de ${pacote.nomeCliente}? O histórico será mantido.`)) return;
+  pacote.status = "cancelado";
+  save();
+  renderAll();
+  toast("Pacote cancelado. O histórico foi preservado.");
+}
+
+/**
+ * Exclui pacote apenas se não houver movimentações ou agendamentos vinculados.
+ * Caso contrário, bloqueia e orienta o usuário a cancelar.
+ */
+function deletePackage(packageId, closeModal = false) {
+  const pacote = state.pacotes.find((item) => item.id === packageId);
+  if (!pacote) return;
+
+  // Verificar agendamentos vinculados
+  const linkedAppointments = state.agendamentos.filter((a) => a.pacoteId === packageId);
+  // Verificar movimentação financeira
+  const linkedFinance = state.financeiro.filter((f) => f.pacoteId === packageId);
+
+  if (linkedAppointments.length > 0 || linkedFinance.length > 0) {
+    // Bloquear exclusão e explicar
+    const msg = [
+      "Não é possível excluir este pacote pois ele possui:",
+      linkedAppointments.length > 0 ? `• ${linkedAppointments.length} agendamento(s) vinculado(s)` : "",
+      linkedFinance.length > 0 ? `• ${linkedFinance.length} lançamento(s) financeiro(s) vinculado(s)` : "",
+      "",
+      "Para encerrar este pacote, use o botão 'Cancelar pacote' em vez de excluir.",
+    ].filter(Boolean).join("\n");
+    alert(msg);
+    return;
+  }
+
+  if (!confirm(`Excluir o pacote "${pacote.nome}"? Esta ação não pode ser desfeita.`)) return;
+
+  // Exclusão segura — sem movimentações
+  state.pacotes = state.pacotes.filter((item) => item.id !== packageId);
+  recomputePackageUsage();
+  save();
+  if (closeModal) document.querySelector("#packageModal").close();
+  renderAll();
+  toast("Pacote excluído.");
+}
+
+/**
+ * Renderiza o histórico de uso do pacote dentro do modal.
+ */
+function renderPackageHistory(packageId) {
+  const history = getPackageHistory(packageId);
+  const section = document.querySelector("#packageHistorySection");
+  const list = document.querySelector("#packageHistoryList");
+  if (!section || !list) return;
+
+  if (!history.length) {
+    section.style.display = "none";
+    return;
+  }
+
+  section.style.display = "block";
+  list.innerHTML = history.map((a) => {
+    const date = new Date(a.dataHoraInicio).toLocaleDateString("pt-BR");
+    const time = new Date(a.dataHoraInicio).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+    const servicoNome = a.servicos
+      ? a.servicos.map((s) => s.nome).join(", ")
+      : (a.nomeServico || "—");
+    const creditosConsumidos = a.creditosConsumidos || 1;
+    return `<div class="package-history-item">
+      <span class="muted">${date} ${time}</span>
+      <span>${escapeHtml(a.nomeCliente)} — ${escapeHtml(servicoNome)}</span>
+      <span class="muted">${creditosConsumidos} crédito(s) consumido(s)</span>
+    </div>`;
+  }).join("");
 }
 
 function renderPackageServiceFields(pacote = null) {
@@ -1653,103 +2148,97 @@ function financeCard(entry) {
 function fillSelects() {
   const clientSelect = document.querySelector("#appointmentClient");
   const packageClientSelect = document.querySelector("#packageClient");
-  const serviceSelect = document.querySelector("#appointmentService");
-  const serviceSelect2 = document.querySelector("#appointmentService2");
   const clientOptions = state.clientes
+    .filter((c) => c.clienteAtivo !== false)
+    .sort((a, b) => a.nome.localeCompare(b.nome))
     .map((c) => `<option value="${c.id}">${escapeHtml(c.nome)} · ${escapeHtml(c.telefone)}</option>`)
     .join("");
   clientSelect.innerHTML = `<option value="">Selecione</option>${clientOptions}`;
   packageClientSelect.innerHTML = `<option value="">Selecione</option>${clientOptions}`;
-  const serviceOptions = state.servicos
-    .filter((s) => s.ativo)
-    .map((s) => `<option value="${s.id}">${escapeHtml(s.nome)} · ${money(s.valorPadrao)}</option>`)
-    .join("");
-  serviceSelect.innerHTML = `<option value="">Selecione</option>${serviceOptions}`;
-  serviceSelect2.innerHTML = `<option value="">Nenhum</option>${serviceOptions}`;
+  // Manter selects de serviço legados compatíveis (usados em outros lugares)
   fillAppointmentPackages();
 }
 
-function fillAppointmentPackages() {
+function fillAppointmentPackages(preserveChecked = false) {
   const packageSelect = document.querySelector("#appointmentPackage");
   const packageHelp = document.querySelector("#packageHelp");
-  const creditSelect = document.querySelector("#packageCreditType");
   const usePackage = document.querySelector("#usePackage");
   const clientId = document.querySelector("#appointmentClient").value;
+
   if (!clientId) {
     packageSelect.innerHTML = `<option value="">Escolha uma cliente primeiro</option>`;
     packageSelect.disabled = true;
-    creditSelect.innerHTML = `<option value="">Escolha um pacote</option>`;
-    creditSelect.disabled = true;
-    usePackage.checked = false;
-    packageHelp.textContent = "Escolha uma cliente para ver os pacotes disponíveis.";
-    updatePackageModeFields();
+    if (!preserveChecked) usePackage.checked = false;
+    if (packageHelp) packageHelp.textContent = "Escolha uma cliente para ver os pacotes disponíveis.";
+    if (!preserveChecked) updatePackageModeFields();
     return;
   }
-  const packages = state.pacotes.filter((pacote) => pacote.clienteId === clientId && pacote.status === "ativo");
+
+  const packages = state.pacotes.filter((p) => p.clienteId === clientId && p.status === "ativo");
   if (!packages.length) {
     packageSelect.innerHTML = `<option value="">Cliente sem pacote ativo</option>`;
     packageSelect.disabled = true;
-    creditSelect.innerHTML = `<option value="">Sem créditos</option>`;
-    creditSelect.disabled = true;
-    usePackage.checked = false;
-    packageHelp.textContent = "Esta cliente ainda não tem pacote ativo. Cadastre em Pacotes > Novo pacote.";
-    updatePackageModeFields();
+    if (!preserveChecked) usePackage.checked = false;
+    if (packageHelp) packageHelp.textContent = "Esta cliente não tem pacote ativo. Cadastre em Pacotes > Novo pacote.";
+    if (!preserveChecked) updatePackageModeFields();
     return;
   }
-  packageSelect.innerHTML = `<option value="">Selecione</option>${packages
-    .map(
-      (pacote) =>
-        `<option value="${pacote.id}">${escapeHtml(pacote.nome)} · ${packageCreditsSummary(pacote) || "sem créditos"}</option>`,
-    )
-    .join("")}`;
+
+  packageSelect.innerHTML = `<option value="">Selecione</option>` +
+    packages.map((p) => `<option value="${p.id}">${escapeHtml(p.nome)} · ${packageCreditsSummary(p) || "sem créditos"}</option>`).join("");
   packageSelect.disabled = !usePackage.checked;
-  fillPackageCreditOptions();
-  creditSelect.disabled = !usePackage.checked || !creditSelect.options.length;
-  packageHelp.textContent = usePackage.checked
-    ? "Escolha o pacote e o serviço que este atendimento vai consumir."
-    : "Marque 'Usar pacote da cliente' se este atendimento deve consumir crédito.";
+
+  if (packageHelp) packageHelp.textContent = usePackage.checked
+    ? "Selecione o pacote e os créditos a consumir neste atendimento."
+    : "Marque 'Usar créditos do pacote' para usar crédito pré-pago.";
+
   updatePackageModeFields();
 }
 
-function fillPackageCreditOptions(selectedServiceId = "") {
-  const packageId = document.querySelector("#appointmentPackage").value;
-  const creditSelect = document.querySelector("#packageCreditType");
-  const appointmentId = document.querySelector("#appointmentId")?.value || "";
-  const pacote = state.pacotes.find((item) => item.id === packageId);
-  if (!pacote) {
-    creditSelect.innerHTML = `<option value="">Escolha um pacote</option>`;
-    return;
-  }
-  const options = (pacote.creditos || [])
-    .filter((credit) => packageAvailability(pacote.id, credit.servicoId, appointmentId) > 0 || credit.servicoId === selectedServiceId)
-    .map((credit) => `<option value="${credit.servicoId}">${escapeHtml(credit.nomeServico || packageCreditLabel(credit.servicoId))} · ${packageAvailability(pacote.id, credit.servicoId, appointmentId)} restante(s)</option>`)
-    .join("");
-  creditSelect.innerHTML = options || `<option value="">Sem crédito disponível</option>`;
-  if (selectedServiceId) creditSelect.value = selectedServiceId;
-}
+/**
+ * Atualiza a visibilidade dos campos do modal de agendamento
+ * conforme o modo (pacote ou serviço normal).
+ * @param {boolean} skipCreditRender - se true, não re-renderiza créditos do pacote
+ *   (usado por openAppointment que já restaurou os créditos no passo anterior)
+ */
+function updatePackageModeFields(skipCreditRender = false) {
+  const usePackage = document.querySelector("#usePackage")?.checked;
 
-function updatePackageModeFields() {
-  const usePackage = document.querySelector("#usePackage").checked;
-  document.querySelectorAll(".package-field").forEach((field) => {
-    field.style.display = usePackage ? "grid" : "none";
+  // Mostrar/ocultar campos de pacote vs serviço normal
+  document.querySelectorAll(".package-field").forEach((f) => { f.style.display = usePackage ? "" : "none"; });
+  document.querySelectorAll(".service-field").forEach((f) => { f.style.display = usePackage ? "none" : ""; });
+  document.querySelectorAll(".payment-field, .payment-discount-fields").forEach((f) => {
+    f.style.display = usePackage ? "none" : "";
   });
-  document.querySelectorAll(".service-field, .payment-field, .payment-discount-fields").forEach((field) => {
-    field.style.display = usePackage ? "none" : "grid";
-  });
-  document.querySelector("#appointmentPrice").disabled = usePackage;
-  document.querySelector("#discountType").disabled = usePackage;
-  document.querySelector("#discountValue").disabled = usePackage;
-  document.querySelector("#appointmentPaymentMethod").disabled = usePackage;
-  document.querySelector("#appointmentPaymentStatus").disabled = usePackage;
+
+  const packageSelect = document.querySelector("#appointmentPackage");
+  if (packageSelect) packageSelect.disabled = !usePackage;
+
   if (usePackage) {
-    document.querySelector("#appointmentPrice").value = 0;
-    document.querySelector("#discountType").value = "nenhum";
-    document.querySelector("#discountValue").value = 0;
-    document.querySelector("#appointmentPaymentMethod").value = "";
-    document.querySelector("#appointmentPaymentStatus").value = "pago";
-    document.querySelector("#appointmentPaymentDiscountType").value = "nenhum";
-    document.querySelector("#appointmentPaymentDiscountValue").value = 0;
+    // Ao ativar pacote: zerar valor e desabilitar campos de pagamento
+    const price = document.querySelector("#appointmentPrice");
+    if (price) price.value = 0;
+    const payMethod = document.querySelector("#appointmentPaymentMethod");
+    if (payMethod) payMethod.value = "";
+    const payStatus = document.querySelector("#appointmentPaymentStatus");
+    if (payStatus) payStatus.value = "pago";
+
+    // Renderizar créditos apenas se não foi feito antes (ex: openAppointment já fez)
+    if (!skipCreditRender) {
+      const pacoteId = packageSelect?.value;
+      if (pacoteId) renderPackageCreditLines(pacoteId);
+      else {
+        const c = document.querySelector("#packageCreditsContainer");
+        if (c) c.innerHTML = "";
+      }
+    }
+  } else {
+    const summary = document.querySelector("#packageCreditSummary");
+    if (summary) summary.style.display = "none";
+    const c = document.querySelector("#packageCreditsContainer");
+    if (c) c.innerHTML = "";
   }
+
   updateFinalPreview();
 }
 
@@ -1784,6 +2273,19 @@ function openPackage(packageId = "") {
   renderPackageServiceFields(pacote);
   document.querySelector("#packageExpires").value = pacote?.validade || "";
   document.querySelector("#deletePackage").style.visibility = pacote ? "visible" : "hidden";
+
+  // Mostrar botão cancelar só para pacotes ativos existentes
+  const cancelBtn = document.querySelector("#cancelPackageBtn");
+  if (cancelBtn) cancelBtn.style.display = (pacote && pacote.status === "ativo") ? "inline-flex" : "none";
+
+  // Mostrar histórico se editar pacote existente
+  if (pacote) {
+    renderPackageHistory(pacote.id);
+  } else {
+    const section = document.querySelector("#packageHistorySection");
+    if (section) section.style.display = "none";
+  }
+
   document.querySelector("#packageModal").showModal();
 }
 
@@ -1794,15 +2296,8 @@ function openAppointment(appointmentId = "") {
   now.setMinutes(Math.ceil(now.getMinutes() / 15) * 15, 0, 0);
   const end = new Date(now.getTime() + 60 * 60 * 1000);
 
+  // 1. Campos simples
   document.querySelector("#appointmentId").value = item?.id || "";
-  document.querySelector("#appointmentClient").value = item?.clienteId || "";
-  fillAppointmentPackages();
-  document.querySelector("#appointmentService").value = item?.servicoId || "";
-  document.querySelector("#appointmentService2").value = item?.servicoId2 || "";
-  document.querySelector("#usePackage").checked = Boolean(item?.usarPacote);
-  fillAppointmentPackages();
-  document.querySelector("#appointmentPackage").value = item?.pacoteId || "";
-  fillPackageCreditOptions(item?.servicoCreditoPacoteId || item?.tipoCreditoPacote || "");
   document.querySelector("#appointmentStart").value = item?.dataHoraInicio || toDateTimeInput(now);
   document.querySelector("#appointmentEnd").value = item?.dataHoraFim || toDateTimeInput(end);
   document.querySelector("#appointmentPrice").value = item?.valorServico ?? "";
@@ -1815,6 +2310,55 @@ function openAppointment(appointmentId = "") {
   document.querySelector("#appointmentStatus").value = item?.status || "Agendado";
   document.querySelector("#appointmentNotes").value = item?.observacoes || "";
   document.querySelector("#deleteAppointment").style.visibility = item ? "visible" : "hidden";
+
+  // 2. Cliente — setar antes de fillAppointmentPackages
+  document.querySelector("#appointmentClient").value = item?.clienteId || "";
+
+  // 3. Modo pacote — setar o checkbox ANTES de chamar fillAppointmentPackages
+  const usarPacote = Boolean(item?.usarPacote);
+  document.querySelector("#usePackage").checked = usarPacote;
+
+  // 4. Preencher lista de pacotes disponíveis para a cliente
+  // preserveChecked=true: não resetar o checkbox nem chamar updatePackageModeFields internamente,
+  // pois já fizemos isso na ordem correta aqui
+  fillAppointmentPackages(true);
+
+  // 5. Restaurar valor do select de pacote (após fillAppointmentPackages que recria as options)
+  if (usarPacote && item?.pacoteId) {
+    document.querySelector("#appointmentPackage").value = item.pacoteId;
+  }
+
+  // 6. Restaurar serviços ou créditos do pacote
+  if (usarPacote && item?.pacoteId) {
+    // Reconstruir créditos: novo formato (creditosConsumidos) ou legado (servicoCreditoPacoteId)
+    let existingCredits = [];
+    if (Array.isArray(item.creditosConsumidos) && item.creditosConsumidos.length) {
+      existingCredits = item.creditosConsumidos.map((c) => ({
+        servicoId: c.servicoId,
+        qty: c.qty || 1,
+      }));
+    } else if (item.servicoCreditoPacoteId || item.tipoCreditoPacote) {
+      existingCredits = [{
+        servicoId: item.servicoCreditoPacoteId || item.tipoCreditoPacote,
+        qty: 1,
+      }];
+    }
+    renderPackageCreditLines(item.pacoteId, existingCredits.filter((c) => c.servicoId));
+  } else {
+    // Restaurar lista de serviços normais
+    let serviceIds = [];
+    if (Array.isArray(item?.servicos) && item.servicos.length) {
+      serviceIds = item.servicos.map((s) => s.id).filter(Boolean);
+    } else if (item?.servicoId) {
+      serviceIds = [item.servicoId];
+      if (item.servicoId2) serviceIds.push(item.servicoId2);
+    }
+    renderServiceLines(serviceIds.length ? serviceIds : [""]);
+  }
+
+  // 7. Atualizar visibilidade dos campos com base no modo (pacote vs serviço)
+  // skipCreditRender=true: os créditos já foram renderizados no passo 6
+  updatePackageModeFields(true);
   updateFinalPreview();
   document.querySelector("#appointmentModal").showModal();
 }
@@ -2239,29 +2783,67 @@ function bindForms() {
     const sendWhatsappAfterSave = event.submitter?.id === "saveAppointmentWhatsapp";
     const appointmentId = document.querySelector("#appointmentId").value;
     const client = state.clientes.find((c) => c.id === document.querySelector("#appointmentClient").value);
-    const service = state.servicos.find((s) => s.id === document.querySelector("#appointmentService").value);
-    const service2 = state.servicos.find((s) => s.id === document.querySelector("#appointmentService2").value);
     const usarPacote = document.querySelector("#usePackage").checked;
     const pacoteId = document.querySelector("#appointmentPackage").value;
-    const servicoCreditoPacoteId = document.querySelector("#packageCreditType").value;
-    const price = usarPacote ? 0 : Number(document.querySelector("#appointmentPrice").value);
-    const finalValue = price;
+    const start = document.querySelector("#appointmentStart").value;
+    const end   = document.querySelector("#appointmentEnd").value;
+
+    if (!client) return toast("Selecione a cliente.");
+    if (parseDate(end) <= parseDate(start)) return toast("O fim precisa ser depois do início.");
+
+    /* ─── MODO PACOTE ─────────────────────────────────────── */
+    let creditosConsumidos = []; // novo formato: [{ servicoId, qty }]
+    let servicoCreditoPacoteId = ""; // compat legado
+    let nomeServico = "";
+
+    if (usarPacote) {
+      if (!pacoteId) return toast("Selecione o pacote da cliente.");
+
+      const lines = readPackageCreditLines().filter((l) => l.servicoId && l.qty > 0);
+      if (!lines.length) return toast("Selecione ao menos um crédito do pacote.");
+
+      // Validar disponibilidade de cada crédito
+      for (const line of lines) {
+        const disponivel = packageAvailability(pacoteId, line.servicoId, appointmentId);
+        if (document.querySelector("#appointmentStatus").value === "Concluído" && disponivel < line.qty) {
+          return toast(`Créditos insuficientes de "${packageCreditLabel(line.servicoId)}" — disponível: ${disponivel}, solicitado: ${line.qty}.`);
+        }
+      }
+
+      creditosConsumidos = lines;
+      servicoCreditoPacoteId = lines[0].servicoId; // compat legado
+      nomeServico = lines.map((l) => packageCreditLabel(l.servicoId)).join(" + ");
+    }
+
+    /* ─── MODO SERVIÇO NORMAL ─────────────────────────────── */
+    let servicos = []; // novo formato: [{ id, nome, valor, duracao }]
+    let valorTotal = 0;
+
+    if (!usarPacote) {
+      const selectedServices = getSelectedServiceLines();
+      if (!selectedServices.length) return toast("Selecione ao menos um serviço.");
+      servicos = selectedServices.map((s) => ({
+        id: s.id,
+        nome: s.nome,
+        valor: Number(s.valorPadrao || 0),
+        duracaoMinutos: Number(s.duracaoMinutos || 0),
+      }));
+      valorTotal = Number(document.querySelector("#appointmentPrice").value) || servicos.reduce((sum, s) => sum + s.valor, 0);
+      if (valorTotal <= 0) return toast("Agendamento precisa ter valor.");
+
+      const paymentMethod = document.querySelector("#appointmentPaymentMethod").value;
+      const appointmentPaymentStatus = document.querySelector("#appointmentPaymentStatus").value;
+      if (appointmentPaymentStatus === "pago" && !paymentMethod) return toast("Selecione a forma de pagamento.");
+    }
+
     const paymentMethod = usarPacote ? "" : document.querySelector("#appointmentPaymentMethod").value;
     const appointmentPaymentStatus = usarPacote ? "pago" : document.querySelector("#appointmentPaymentStatus").value;
-    const paymentDiscountType = document.querySelector("#appointmentPaymentDiscountType").value;
+    const paymentDiscountType  = document.querySelector("#appointmentPaymentDiscountType").value;
     const paymentDiscountValue = Number(document.querySelector("#appointmentPaymentDiscountValue").value || 0);
-    const start = document.querySelector("#appointmentStart").value;
-    const end = document.querySelector("#appointmentEnd").value;
-    if (!client) return toast("Selecione a cliente.");
-    if (!usarPacote && !service) return toast("Selecione o serviço.");
-    if (!usarPacote && (!price || price <= 0)) return toast("Agendamento precisa ter valor.");
-    if (!usarPacote && appointmentPaymentStatus === "pago" && !paymentMethod) return toast("Selecione a forma de pagamento.");
-    if (parseDate(end) <= parseDate(start)) return toast("O fim precisa ser depois do início.");
-    if (usarPacote && !pacoteId) return toast("Selecione o pacote da cliente.");
-    if (usarPacote && !servicoCreditoPacoteId) return toast("Selecione o serviço do pacote.");
-    if (usarPacote && document.querySelector("#appointmentStatus").value === "Concluído" && packageAvailability(pacoteId, servicoCreditoPacoteId, appointmentId) <= 0) {
-      return toast(`Este pacote não tem crédito disponível de ${packageCreditLabel(servicoCreditoPacoteId)}.`);
-    }
+
+    // Nome do serviço para exibição (compatibilidade legada)
+    const primeiroServico = servicos[0];
+    if (!usarPacote) nomeServico = servicos.map((s) => s.nome).join(" + ");
 
     const existing = state.agendamentos.find((a) => a.id === appointmentId);
     const payload = {
@@ -2269,14 +2851,18 @@ function bindForms() {
       clienteId: client.id,
       nomeCliente: client.nome,
       telefone: client.telefone,
-      servicoId: usarPacote ? servicoCreditoPacoteId : service?.id || "",
-      nomeServico: usarPacote ? packageCreditLabel(servicoCreditoPacoteId) : service?.nome || "",
-      servicoId2: service2?.id || "",
-      nomeServico2: service2?.nome || "",
-      valorServico: price,
+      // Novo formato de serviços
+      servicos: usarPacote ? [] : servicos,
+      creditosConsumidos: usarPacote ? creditosConsumidos : [],
+      // Campos legados (compatibilidade)
+      servicoId:  usarPacote ? servicoCreditoPacoteId : (primeiroServico?.id || ""),
+      nomeServico: nomeServico,
+      servicoId2: servicos[1]?.id || "",
+      nomeServico2: servicos[1]?.nome || "",
+      valorServico: usarPacote ? 0 : valorTotal,
       descontoTipo: "nenhum",
       descontoValor: 0,
-      valorFinal: finalValue,
+      valorFinal: usarPacote ? 0 : valorTotal,
       dataHoraInicio: start,
       dataHoraFim: end,
       status: document.querySelector("#appointmentStatus").value,
@@ -2295,8 +2881,8 @@ function bindForms() {
       descontoPagamentoTipo: paymentMethod === "dinheiro" || paymentMethod === "pix" ? paymentDiscountType : "nenhum",
       descontoPagamentoValor: paymentMethod === "dinheiro" || paymentMethod === "pix" ? paymentDiscountValue : 0,
       valorDescontoPagamento: existing?.valorDescontoPagamento || 0,
-      valorBruto: finalValue,
-      valorLiquido: usarPacote ? 0 : existing?.valorLiquido ?? finalValue,
+      valorBruto: usarPacote ? 0 : valorTotal,
+      valorLiquido: usarPacote ? 0 : (existing?.valorLiquido ?? valorTotal),
       dataPagamento: usarPacote ? toDateInput(start) : appointmentPaymentStatus === "pago" ? existing?.dataPagamento || toDateInput(new Date()) : "",
       observacoesPagamento: existing?.observacoesPagamento || "",
       financeiroGerado: existing?.financeiroGerado || false,
@@ -2304,10 +2890,8 @@ function bindForms() {
     };
 
     const conflict = getScheduleConflict(payload);
-    if (conflict) {
-      showConflictDialog(conflict);
-      return;
-    }
+    if (conflict) { showConflictDialog(conflict); return; }
+
     let savedAppointment = payload;
     if (appointmentId) {
       Object.assign(existing, payload);
@@ -2315,21 +2899,18 @@ function bindForms() {
     } else {
       state.agendamentos.push(payload);
     }
+
     if (savedAppointment.statusPagamento === "pago" && !savedAppointment.usarPacote) {
-      const paymentValues = calculatePaymentValues(
-        savedAppointment.valorFinal,
-        savedAppointment.formaPagamento,
-        savedAppointment.descontoPagamentoTipo,
-        savedAppointment.descontoPagamentoValor,
-      );
-      savedAppointment.taxaPercentual = paymentValues.rate;
-      savedAppointment.valorTaxa = paymentValues.taxAmount;
-      savedAppointment.valorDescontoPagamento = paymentValues.discountAmount;
-      savedAppointment.valorBruto = paymentValues.grossValue;
-      savedAppointment.valorLiquido = paymentValues.netValue;
+      const pv = calculatePaymentValues(savedAppointment.valorFinal, savedAppointment.formaPagamento, savedAppointment.descontoPagamentoTipo, savedAppointment.descontoPagamentoValor);
+      savedAppointment.taxaPercentual = pv.rate;
+      savedAppointment.valorTaxa = pv.taxAmount;
+      savedAppointment.valorDescontoPagamento = pv.discountAmount;
+      savedAppointment.valorBruto = pv.grossValue;
+      savedAppointment.valorLiquido = pv.netValue;
     } else if (!savedAppointment.usarPacote) {
       resetAppointmentPayment(savedAppointment);
     }
+
     syncAppointmentFinance(savedAppointment);
     recomputePackageUsage();
     save();
@@ -2388,6 +2969,10 @@ function bindForms() {
       debito: Number(document.querySelector("#taxaDebito").value || 0),
       credito: Number(document.querySelector("#taxaCredito").value || 0),
     };
+    state.settings.openingTime = document.querySelector("#settingOpeningTime").value;
+    state.settings.closingTime = document.querySelector("#settingClosingTime").value;
+    state.settings.lunchStart = document.querySelector("#settingLunchStart").value;
+    state.settings.lunchEnd = document.querySelector("#settingLunchEnd").value;
     save();
     renderAll();
     toast("Configurações salvas.");
@@ -2487,6 +3072,16 @@ function bindButtons() {
   document.querySelector("#openServiceModal").addEventListener("click", () => openService());
   document.querySelector("#openAppointmentModal").addEventListener("click", () => openAppointment());
   document.querySelector("#quickAppointment").addEventListener("click", () => openAppointment());
+  // Botão + Adicionar serviço no modal de agendamento
+  document.querySelector("#addServiceLine")?.addEventListener("click", addServiceLine);
+  // Botão cancelar pacote no modal
+  document.querySelector("#cancelPackageBtn")?.addEventListener("click", () => {
+    const packageId = document.querySelector("#packageId").value;
+    if (packageId) {
+      document.querySelector("#packageModal").close();
+      cancelPackage(packageId);
+    }
+  });
   document.querySelector("#openEmployeeModalAdmin").addEventListener("click", () => {
     if (!checkPermission("admin")) {
       toast("Apenas administradores podem gerenciar funcionários.");
@@ -2702,21 +3297,28 @@ function bindInputs() {
     financeMonth.value = toMonthInput(new Date());
   }
 
-  ["agendaMonth", "agendaStatus", "agendaSearch", "clientSearch", "serviceSearch", "packageSearch", "financeMonth", "financeType", "dashboardPeriod"].forEach((idName) => {
-    document.querySelector(`#${idName}`).addEventListener("input", renderAll);
+  ["agendaMonth", "agendaStatus", "agendaSearch", "clientSearch", "serviceSearch", "packageSearch", "financeMonth", "financeType", "dashboardPeriod", "packageStatusFilter"].forEach((idName) => {
+    document.querySelector(`#${idName}`)?.addEventListener("input", renderAll);
   });
 
   ["appointmentPrice", "discountType", "discountValue", "appointmentPaymentMethod", "appointmentPaymentDiscountType", "appointmentPaymentDiscountValue", "appointmentPaymentStatus"].forEach((idName) => {
     document.querySelector(`#${idName}`).addEventListener("input", updateFinalPreview);
   });
 
-  document.querySelector("#appointmentStart").addEventListener("input", updateAppointmentEndFromService);
+  document.querySelector("#appointmentStart").addEventListener("input", () => {
+    if (!document.querySelector("#usePackage")?.checked) recalcFromServices();
+  });
   document.querySelector("#appointmentClient").addEventListener("change", fillAppointmentPackages);
-  document.querySelector("#usePackage").addEventListener("change", fillAppointmentPackages);
-  document.querySelector("#appointmentPackage").addEventListener("change", () => fillPackageCreditOptions());
-  document.querySelector("#appointmentService").addEventListener("change", updateAppointmentPriceFromServices);
-  document.querySelector("#appointmentService2").addEventListener("change", updateAppointmentPriceFromServices);
-  ["settingCompanyName", "settingSubtitle", "settingLogoText", "settingGreen", "settingGreenDark", "settingBeige", "settingInk", "settingAlert", "taxaDebito", "taxaCredito"].forEach((idName) => {
+  document.querySelector("#usePackage").addEventListener("change", () => {
+    fillAppointmentPackages();
+    updatePackageModeFields();
+    if (!document.querySelector("#usePackage").checked) renderServiceLines([""]);
+  });
+  document.querySelector("#appointmentPackage").addEventListener("change", () => {
+    const pacoteId = document.querySelector("#appointmentPackage").value;
+    if (pacoteId) renderPackageCreditLines(pacoteId);
+  });
+  ["settingCompanyName", "settingSubtitle", "settingLogoText", "settingGreen", "settingGreenDark", "settingBeige", "settingInk", "settingAlert", "taxaDebito", "taxaCredito", "settingOpeningTime", "settingClosingTime", "settingLunchStart", "settingLunchEnd"].forEach((idName) => {
     document.querySelector(`#${idName}`).addEventListener("input", () => {
       state.settings.companyName = document.querySelector("#settingCompanyName").value;
       state.settings.subtitle = document.querySelector("#settingSubtitle").value;
@@ -2730,6 +3332,10 @@ function bindInputs() {
         debito: Number(document.querySelector("#taxaDebito").value || 0),
         credito: Number(document.querySelector("#taxaCredito").value || 0),
       };
+      state.settings.openingTime = document.querySelector("#settingOpeningTime").value;
+      state.settings.closingTime = document.querySelector("#settingClosingTime").value;
+      state.settings.lunchStart = document.querySelector("#settingLunchStart").value;
+      state.settings.lunchEnd = document.querySelector("#settingLunchEnd").value;
       applySettings(true);
       document.querySelector("#adminNamePreview").textContent = document.querySelector("#settingCompanyName").value || DEFAULT_SETTINGS.companyName;
       document.querySelector("#adminSubtitlePreview").textContent = document.querySelector("#settingSubtitle").value || DEFAULT_SETTINGS.subtitle;
@@ -2841,24 +3447,11 @@ function download(filename, content, type) {
   URL.revokeObjectURL(url);
 }
 
-bindNavigation();
-bindModalClose();
-bindForms();
-bindButtons();
-bindInputs();
-renderAll();
-initAuth(); // Changed from initRemoteSync()
-initRemoteSync();
-
-// ─────────────────────────────────────────────
-// LANDING CONTENT EDITOR
-// ─────────────────────────────────────────────
-
 const DEFAULT_LANDING_CONTENT = {
   heroEyebrow: "Nail design, alongamento e cuidado",
   heroTitle: "Rayssa Oliveira Nail Design",
   heroDescription: "Unhas feitas com acabamento delicado, planejamento do formato e orientacao de cuidados para manter o resultado bonito por mais tempo.",
-  heroImage: "https://images.unsplash.com/photo-1604654894610-df63bc536371?auto=format&fit=crop&w=1300&q=85",
+  heroImage: "assets/site/hero-placeholder.svg",
   highlight1Title: "Atendimento personalizado",
   highlight1Text: "Escolha de formato, tamanho, cor e acabamento conforme seu estilo.",
   highlight2Title: "Procedimento orientado",
@@ -2878,7 +3471,7 @@ const DEFAULT_LANDING_CONTENT = {
   splitEyebrow: "Como funciona",
   splitTitle: "Do preparo a finalizacao, cada etapa protege o resultado",
   splitText: "O procedimento comeca com avaliacao das unhas, higienizacao, preparo da superficie, escolha do formato, aplicacao do produto adequado e finalizacao com cor, brilho ou decoracao.",
-  splitImage: "https://images.unsplash.com/photo-1632345031435-8727f6897d53?auto=format&fit=crop&w=900&q=85",
+  splitImage: "assets/site/split-placeholder.svg",
   portfolioEyebrow: "Portfolio",
   portfolioTitle: "Acabamentos para inspirar sua proxima escolha",
   feedTitle: "Acompanhe as novidades",
@@ -2893,160 +3486,279 @@ const DEFAULT_LANDING_CONTENT = {
   care4Title: "Respeite o prazo de manutencao",
   care4Text: "O retorno no periodo indicado preserva a estrutura e deixa o resultado sempre alinhado.",
   portfolioPhotos: [
-    { url: "https://images.unsplash.com/photo-1599206676335-193c82b13c9e?auto=format&fit=crop&w=700&q=85", caption: "Delicado e natural" },
-    { url: "https://images.unsplash.com/photo-1610992015732-2449b76344bc?auto=format&fit=crop&w=700&q=85", caption: "Cor e brilho" },
-    { url: "https://images.unsplash.com/photo-1519014816548-bf5fe059798b?auto=format&fit=crop&w=700&q=85", caption: "Classico elegante" },
+    { url: "assets/site/portfolio-placeholder.svg", caption: "Delicado e natural" },
+    { url: "assets/site/portfolio-placeholder.svg", caption: "Cor e brilho" },
+    { url: "assets/site/portfolio-placeholder.svg", caption: "Classico elegante" },
   ],
   feedPosts: [],
 };
 
-// Campos simples do editor de landing
 const LANDING_TEXT_FIELDS = [
-  "heroEyebrow","heroTitle","heroDescription","heroImage",
-  "highlight1Title","highlight1Text","highlight2Title","highlight2Text","highlight3Title","highlight3Text",
-  "servicesEyebrow","servicesTitle",
-  "service1Title","service1Text","service2Title","service2Text","service3Title","service3Text","service4Title","service4Text",
-  "splitEyebrow","splitTitle","splitText","splitImage",
-  "portfolioEyebrow","portfolioTitle","feedTitle",
-  "careEyebrow","careTitle",
-  "care1Title","care1Text","care2Title","care2Text","care3Title","care3Text","care4Title","care4Text",
+  "heroEyebrow", "heroTitle", "heroDescription", "heroImage",
+  "highlight1Title", "highlight1Text", "highlight2Title", "highlight2Text", "highlight3Title", "highlight3Text",
+  "servicesEyebrow", "servicesTitle",
+  "service1Title", "service1Text", "service2Title", "service2Text", "service3Title", "service3Text", "service4Title", "service4Text",
+  "splitEyebrow", "splitTitle", "splitText", "splitImage",
+  "portfolioEyebrow", "portfolioTitle", "feedTitle",
+  "careEyebrow", "careTitle",
+  "care1Title", "care1Text", "care2Title", "care2Text", "care3Title", "care3Text", "care4Title", "care4Text",
 ];
 
 function getLandingContent() {
   return { ...DEFAULT_LANDING_CONTENT, ...(state.landingContent || {}) };
 }
 
+function updateImageUploadPreview(fieldId, src) {
+  const preview = document.querySelector(`#${fieldId}Preview`);
+  if (!preview) return;
+  if (src) {
+    preview.src = src;
+    preview.style.display = "block";
+  } else {
+    preview.removeAttribute("src");
+    preview.style.display = "none";
+  }
+}
+
+function imageFileToDataUrl(file, maxSize = 1600, quality = 0.82) {
+  return new Promise((resolve, reject) => {
+    if (!file || !file.type.startsWith("image/")) {
+      reject(new Error("Selecione um arquivo de imagem."));
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const image = new Image();
+      image.onload = () => {
+        const scale = Math.min(1, maxSize / Math.max(image.width, image.height));
+        const width = Math.max(1, Math.round(image.width * scale));
+        const height = Math.max(1, Math.round(image.height * scale));
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const context = canvas.getContext("2d");
+        context.drawImage(image, 0, 0, width, height);
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      };
+      image.onerror = () => reject(new Error("Nao foi possivel ler esta imagem."));
+      image.src = reader.result;
+    };
+    reader.onerror = () => reject(new Error("Nao foi possivel carregar o arquivo."));
+    reader.readAsDataURL(file);
+  });
+}
+
+function bindLandingImageUpload(fieldId) {
+  const fileInput = document.querySelector(`#${fieldId}File`);
+  let valueInput = document.querySelector(`#${fieldId}`);
+  
+  if (!valueInput) return;
+
+  if (fileInput) {
+    fileInput.addEventListener("change", async () => {
+      const file = fileInput.files?.[0];
+      if (!file) return;
+      try {
+        toast("Enviando imagem para o Storage...");
+        const downloadUrl = await uploadLandingImageFile(file, `landing/${fieldId}`);
+        valueInput.value = downloadUrl;
+        updateImageUploadPreview(fieldId, downloadUrl);
+        toast("Imagem salva no Storage. Clique em Salvar site para publicar.");
+      } catch (err) {
+        console.error("Erro ao enviar imagem:", err);
+        toast(err.message || "Nao foi possivel enviar a imagem.");
+        fileInput.value = "";
+      }
+    });
+  }
+
+  // Allow pasting/typing a direct image URL and update preview immediately
+  valueInput.addEventListener("input", () => {
+    try {
+      const url = (valueInput.value || "").trim();
+      updateImageUploadPreview(fieldId, url);
+    } catch (err) {
+      console.error("Erro ao atualizar pré-visualização:", err);
+    }
+  });
+}
+
 function renderLandingEditor() {
+  if (!document.querySelector("#landingEditorPanel")) return;
   const content = getLandingContent();
 
-  // Preencher campos de texto
+  // Preencher os campos de texto, incluindo textareas
   LANDING_TEXT_FIELDS.forEach((key) => {
     const el = document.querySelector(`#lc_${key}`);
-    if (el) el.value = content[key] || "";
+    if (el && el.type !== "hidden") {
+      if (el.tagName === "TEXTAREA" || el.tagName === "INPUT") {
+        el.value = content[key] || "";
+      }
+    }
   });
-
-  // Renderizar fotos do portfolio
+  
+  // Preencher as imagens
+  updateImageUploadPreview("lc_heroImage", content.heroImage || "");
+  // ensure URL input exists and is filled (support variants with/without lc_ prefix)
+  const heroInput = document.querySelector('#lc_heroImage') || document.querySelector('#heroImage');
+  if (heroInput && heroInput.tagName === 'INPUT') heroInput.value = content.heroImage || '';
+  updateImageUploadPreview("lc_splitImage", content.splitImage || "");
+  const splitInput = document.querySelector('#lc_splitImage') || document.querySelector('#splitImage');
+  if (splitInput && splitInput.tagName === 'INPUT') splitInput.value = content.splitImage || '';
   renderPortfolioPhotosEditor(content.portfolioPhotos || []);
-
-  // Renderizar posts do feed
-  renderFeedPostsEditor(content.feedPosts || []);
+  // feed removed from admin editor
 }
 
 function renderPortfolioPhotosEditor(photos) {
   const container = document.querySelector("#portfolioPhotosEditor");
   if (!container) return;
+
+  if (!photos || !photos.length) {
+    container.innerHTML = `<div class="muted" style="padding:12px">Nenhuma foto. Clique em "+ Adicionar foto".</div>`;
+    return;
+  }
+
   container.innerHTML = photos.map((photo, i) => `
     <div class="photo-editor-row" data-photo-index="${i}">
-      <label>URL da imagem<input class="photo-url-input" value="${escapeHtml(photo.url || "")}" placeholder="https://..." /></label>
-      <label>Legenda<input class="photo-caption-input" value="${escapeHtml(photo.caption || "")}" /></label>
-      <button class="remove-photo-btn" data-remove-photo="${i}" type="button">Remover</button>
+      <div class="photo-upload-cell">
+        ${photo.url
+          ? `<img class="photo-preview-thumb" src="${escapeHtml(photo.url)}" alt="foto ${i + 1}" />`
+          : `<div class="photo-preview-empty">Sem foto</div>`
+        }
+        <div class="photo-upload-actions">
+          ${photo.url ? `<button class="remove-photo-btn" data-remove-photo="${i}" type="button" title="Remover foto">🗑 Remover</button>` : ""}
+        </div>
+      </div>
+      <div style="display:grid;gap:8px">
+        <label>
+          Link da foto
+          <input class="photo-url-input" value="${escapeHtml(photo.url || "")}" placeholder="https://... (URL da imagem)" data-index="${i}" />
+        </label>
+        <label>
+          Legenda
+          <input class="photo-caption-input" value="${escapeHtml(photo.caption || "")}" placeholder="Ex.: Alongamento nude" />
+        </label>
+      </div>
     </div>
-  `).join("") || `<div class="muted" style="padding:12px">Nenhuma foto. Clique em "+ Adicionar foto".</div>`;
+  `).join("");
 
+  // Bind alteração de URL para cada foto para atualizar preview
+  container.querySelectorAll(".photo-url-input").forEach((input) => {
+    input.addEventListener("input", () => {
+      const index = Number(input.dataset.index);
+      const url = input.value.trim();
+      const preview = container.querySelector(`.photo-editor-row[data-photo-index="${index}"] .photo-upload-cell`);
+      if (preview) {
+        if (url) {
+          preview.innerHTML = `<img class="photo-preview-thumb" src="${escapeHtml(url)}" alt="foto ${index + 1}" /><div class="photo-upload-actions"><button class="remove-photo-btn" data-remove-photo="${index}" type="button" title="Remover foto">🗑 Remover</button></div>`;
+          // Re-bind remove button since we replaced innerHTML
+          preview.querySelector("[data-remove-photo]").addEventListener("click", () => {
+            const content = readLandingEditorValues();
+            const updatedPhotos = [...(content.portfolioPhotos || [])];
+            updatedPhotos.splice(index, 1);
+            state.landingContent = { ...content, portfolioPhotos: updatedPhotos };
+            renderPortfolioPhotosEditor(updatedPhotos);
+          });
+        } else {
+          preview.innerHTML = `<div class="photo-preview-empty">Sem foto</div><div class="photo-upload-actions"></div>`;
+        }
+      }
+    });
+  });
+
+  // Bind remoção
   container.querySelectorAll("[data-remove-photo]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      const content = getLandingContent();
-      const photos = [...(content.portfolioPhotos || [])];
-      photos.splice(Number(btn.dataset.removePhoto), 1);
-      state.landingContent = { ...content, portfolioPhotos: photos };
-      renderPortfolioPhotosEditor(photos);
+      const content = readLandingEditorValues();
+      const updatedPhotos = [...(content.portfolioPhotos || [])];
+      updatedPhotos.splice(Number(btn.dataset.removePhoto), 1);
+      state.landingContent = { ...content, portfolioPhotos: updatedPhotos };
+      renderPortfolioPhotosEditor(updatedPhotos);
     });
   });
 }
 
-function renderFeedPostsEditor(posts) {
-  const container = document.querySelector("#feedPostsEditor");
-  if (!container) return;
-  container.innerHTML = posts.map((post, i) => `
-    <div class="feed-post-editor-row" data-post-index="${i}">
-      <div class="feed-post-editor-fields">
-        <label>URL da imagem<input class="fp-image-input" value="${escapeHtml(post.imageUrl || "")}" placeholder="https://..." /></label>
-        <label>Legenda / descrição<textarea class="fp-caption-input" rows="2">${escapeHtml(post.caption || "")}</textarea></label>
-      </div>
-      <button class="remove-post-btn" data-remove-post="${i}" type="button">Remover</button>
-    </div>
-  `).join("") || `<div class="muted" style="padding:12px">Nenhuma publicação. Clique em "+ Nova publicação".</div>`;
-
-  container.querySelectorAll("[data-remove-post]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const content = getLandingContent();
-      const posts = [...(content.feedPosts || [])];
-      posts.splice(Number(btn.dataset.removePost), 1);
-      state.landingContent = { ...content, feedPosts: posts };
-      renderFeedPostsEditor(posts);
-    });
-  });
-}
+function renderFeedPostsEditor() { /* feed removed */ }
 
 function readLandingEditorValues() {
   const content = getLandingContent();
 
-  // Campos de texto
   LANDING_TEXT_FIELDS.forEach((key) => {
     const el = document.querySelector(`#lc_${key}`);
     if (el) content[key] = el.value.trim();
   });
 
-  // Fotos do portfolio
   const photoRows = document.querySelectorAll(".photo-editor-row");
-  content.portfolioPhotos = Array.from(photoRows).map((row) => ({
-    url: row.querySelector(".photo-url-input")?.value.trim() || "",
-    caption: row.querySelector(".photo-caption-input")?.value.trim() || "",
-  })).filter((p) => p.url);
+  if (photoRows.length || document.querySelector("#portfolioPhotosEditor")) {
+    content.portfolioPhotos = Array.from(photoRows).map((row) => ({
+      url: (row.querySelector(".photo-url-input")?.value || "").trim(),
+      caption: (row.querySelector(".photo-caption-input")?.value || "").trim(),
+    })).filter((p) => p.url);
+  }
 
-  // Posts do feed
-  const postRows = document.querySelectorAll(".feed-post-editor-row");
-  const existingPosts = getLandingContent().feedPosts || [];
-  content.feedPosts = Array.from(postRows).map((row, i) => {
-    const existing = existingPosts[i] || {};
-    return {
-      id: existing.id || (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${i}`),
-      imageUrl: row.querySelector(".fp-image-input")?.value.trim() || "",
-      caption: row.querySelector(".fp-caption-input")?.value.trim() || "",
-      createdAt: existing.createdAt || new Date().toISOString(),
-      comments: existing.comments || [],
-    };
-  }).filter((p) => p.imageUrl);
+  // feed removed — do not collect feedPosts from editor
 
   return content;
 }
 
-async function saveLandingContent() {
-  const content = readLandingEditorValues();
-  state.landingContent = content;
-  save();
-  toast("Site atualizado com sucesso.");
+function buildStateWithLanding(newLanding) {
+  const base = serializableState();
+  base.landingContent = newLanding || {};
+  return base;
 }
 
-// Bind landing editor buttons
-document.querySelector("#saveLandingContent")?.addEventListener("click", saveLandingContent);
+async function saveLandingContent() {
+  const newLanding = readLandingEditorValues();
 
-document.querySelector("#addPortfolioPhoto")?.addEventListener("click", () => {
-  const content = getLandingContent();
-  const photos = [...(content.portfolioPhotos || []), { url: "", caption: "" }];
-  state.landingContent = { ...content, portfolioPhotos: photos };
-  renderPortfolioPhotosEditor(photos);
-});
+  if (!isFirebaseConfigured()) {
+    toast("Firebase não está configurado. Configure o Firebase para salvar no servidor.");
+    return;
+  }
 
-document.querySelector("#addFeedPost")?.addEventListener("click", () => {
-  const content = getLandingContent();
-  const posts = [...(content.feedPosts || []), {
-    id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}`,
-    imageUrl: "",
-    caption: "",
-    createdAt: new Date().toISOString(),
-    comments: [],
-  }];
-  state.landingContent = { ...content, feedPosts: posts };
-  renderFeedPostsEditor(posts);
-});
+  if (!firebase.apps.length) firebase.initializeApp(window.FIREBASE_CONFIG);
 
-// Render landing editor when admin page is shown
-const originalSetPage = setPage;
-// Patch setPage to render landing editor when admin page opens
-document.querySelectorAll("[data-page='admin']").forEach((btn) => {
-  btn.addEventListener("click", () => {
-    setTimeout(renderLandingEditor, 50);
+  if (!firebase.auth().currentUser) {
+    toast("Faça login como administrador para salvar alterações no Firebase.");
+    return;
+  }
+
+  try {
+    toast("Salvando no Firebase...");
+    if (!remoteDb) remoteDb = firebase.firestore();
+    if (!remoteDocRef) remoteDocRef = remoteDb.doc(window.FIREBASE_DOC_PATH || "sistemas/firebase");
+
+    await remoteDocRef.set({ state: buildStateWithLanding(newLanding), updatedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
+
+    // Only update local state after successful remote save
+    state.landingContent = newLanding;
+    renderLandingEditor();
+    toast("Site salvo no Firebase com sucesso.");
+  } catch (err) {
+    console.error("Erro ao salvar landingContent no Firebase:", err);
+    toast("Não foi possível salvar no Firebase. Verifique permissões ou conexão.");
+  }
+}
+
+function bindLandingEditor() {
+  document.querySelector("#saveLandingContent")?.addEventListener("click", saveLandingContent);
+  bindLandingImageUpload("lc_heroImage");
+  bindLandingImageUpload("lc_splitImage");
+
+  document.querySelector("#addPortfolioPhoto")?.addEventListener("click", () => {
+    const content = readLandingEditorValues();
+    const photos = [...(content.portfolioPhotos || []), { url: "", caption: "" }];
+    state.landingContent = { ...content, portfolioPhotos: photos };
+    renderPortfolioPhotosEditor(photos);
   });
-});
+  // feed removed — no add feed post button
+}
 
+bindNavigation();
+bindModalClose();
+bindForms();
+bindButtons();
+bindInputs();
+bindLandingEditor();
+renderAll();
+initAuth();
