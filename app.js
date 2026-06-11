@@ -10,6 +10,8 @@ const DEFAULT_SETTINGS = {
   subtitle: "Nail designer",
   logoText: "B",
   logoImage: "",
+  telefoneContato: "",
+  instagram: "",
   developerCredit: "Desenvolvido por Rafael Aguiar Ribeiro · Instagram @aguiar.3d",
   colors: {
     green: "#4f7d5a",
@@ -36,10 +38,12 @@ let remoteDocRef = null;
 let remoteReady = false;
 let applyingRemoteState = false;
 let pendingRemoteSave = null;
+let remoteUnsubscribe = null;
 let deferredInstallPrompt = null;
 let currentUser = null;
 let userPermissions = {};
 let afterPaymentSaveCallback = null;
+const APPOINTMENT_STATUSES = ["Pendente confirmação", "Agendado", "Confirmado", "Concluído", "Cancelado"];
 
 const pages = {
   dashboard: {
@@ -152,6 +156,7 @@ function loadState() {
         dataCadastro: now.toISOString(),
       },
     ],
+    landingContent: {},
   };
 }
 
@@ -201,6 +206,7 @@ function serializableState() {
     agendamentos: state.agendamentos,
     pacotes: state.pacotes,
     financeiro: state.financeiro,
+    landingContent: state.landingContent || {},
   }));
 }
 
@@ -211,6 +217,7 @@ function replaceState(nextState) {
   state.agendamentos = Array.isArray(nextState.agendamentos) ? nextState.agendamentos : [];
   state.pacotes = Array.isArray(nextState.pacotes) ? nextState.pacotes : [];
   state.financeiro = Array.isArray(nextState.financeiro) ? nextState.financeiro : [];
+  state.landingContent = nextState.landingContent || {};
   migrateState();
 }
 
@@ -251,10 +258,12 @@ async function initAuth() {
       if (user) {
         currentUser = user;
         await loadUserPermissions(user.uid);
+        initRemoteSync();
         showApp();
         renderAll();
       } else {
         currentUser = null;
+        stopRemoteSync();
         showLogin();
       }
     });
@@ -274,6 +283,8 @@ async function createDefaultAdminAccount() {
     try {
       await firebase.auth().signInWithEmailAndPassword(adminEmail, adminPassword);
       console.log("Conta admin já existe e está ativa");
+      await saveLoginAliases("admin", adminName, adminEmail);
+      await ensureAllLoginAliases();
       await firebase.auth().signOut(); // Fazer logout para permitir login normal
       return;
     } catch (loginError) {
@@ -301,6 +312,8 @@ async function createDefaultAdminAccount() {
           createdAt: firebase.firestore.FieldValue.serverTimestamp(),
           updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
         });
+        await saveLoginAliases("admin", adminName, adminEmail);
+        await ensureAllLoginAliases();
 
         console.log("Conta admin criada com sucesso");
         await firebase.auth().signOut();
@@ -339,6 +352,41 @@ function showLogin() {
   applySettings();
   document.querySelector("#appShell").style.display = "none";
   document.querySelector("#loginOverlay").style.display = "flex";
+}
+
+function loginAliasKey(value) {
+  return normalize(value).replace(/[^a-z0-9._-]/g, "");
+}
+
+async function saveLoginAliases(username, name, email) {
+  if (!remoteDb) remoteDb = firebase.firestore();
+  const batch = remoteDb.batch();
+  const aliases = [username, name]
+    .map(loginAliasKey)
+    .filter(Boolean);
+  if (!aliases.length) return;
+  aliases.forEach((alias) => {
+    batch.set(
+      remoteDb.collection("loginAliases").doc(alias),
+      {
+        email,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    );
+  });
+  await batch.commit();
+}
+
+async function ensureAllLoginAliases() {
+  if (!remoteDb) remoteDb = firebase.firestore();
+  const snapshot = await remoteDb.collection("users").get();
+  const saves = [];
+  snapshot.forEach((doc) => {
+    const user = doc.data();
+    if (user?.email) saves.push(saveLoginAliases(user.username || "", user.name || "", user.email));
+  });
+  await Promise.all(saves);
 }
 
 function showApp() {
@@ -385,19 +433,8 @@ async function resolveLoginEmail(identifier) {
 
   try {
     if (!remoteDb) remoteDb = firebase.firestore();
-    
-    // First try username
-    let snapshot = await remoteDb.collection("users").where("username", "==", identifier).limit(1).get();
-    if (!snapshot.empty) {
-      return snapshot.docs[0].data().email;
-    }
-    
-    // Then try name
-    snapshot = await remoteDb.collection("users").where("name", "==", identifier).limit(1).get();
-    if (!snapshot.empty) {
-      return snapshot.docs[0].data().email;
-    }
-    
+    const aliasDoc = await remoteDb.collection("loginAliases").doc(loginAliasKey(identifier)).get();
+    if (aliasDoc.exists && aliasDoc.data()?.email) return aliasDoc.data().email;
     throw new Error("Usuário não encontrado");
   } catch (error) {
     throw { code: "auth/user-not-found", message: "Usuário não encontrado." };
@@ -434,13 +471,15 @@ function initRemoteSync() {
     console.info("Firebase não configurado. Usando armazenamento local deste navegador.");
     return;
   }
+  if (remoteUnsubscribe) return;
 
   try {
     if (!firebase.apps.length) firebase.initializeApp(window.FIREBASE_CONFIG);
+    if (!firebase.auth().currentUser) return;
     remoteDb = firebase.firestore();
     remoteDocRef = remoteDb.doc(window.FIREBASE_DOC_PATH || "sistemas/firebase");
 
-    remoteDocRef.onSnapshot(
+    remoteUnsubscribe = remoteDocRef.onSnapshot(
       (snapshot) => {
         if (!snapshot.exists) {
           remoteReady = true;
@@ -506,6 +545,7 @@ function migrateState() {
   state.agendamentos ||= [];
   state.financeiro ||= [];
   state.pacotes ||= [];
+  state.landingContent ||= {};
   state.clientes.forEach((cliente) => {
     if (cliente.clienteAtivo === undefined) cliente.clienteAtivo = true;
   });
@@ -596,6 +636,8 @@ function renderAdminSettings() {
   const settings = state.settings;
   document.querySelector("#settingCompanyName").value = settings.companyName;
   document.querySelector("#settingSubtitle").value = settings.subtitle;
+  document.querySelector("#settingTelefoneContato").value = settings.telefoneContato || "";
+  document.querySelector("#settingInstagram").value = settings.instagram || "";
   document.querySelector("#settingLogoText").value = settings.logoText;
   document.querySelector("#settingGreen").value = settings.colors.green;
   document.querySelector("#settingGreenDark").value = settings.colors.greenDark;
@@ -613,6 +655,15 @@ function renderAdminSettings() {
   } else {
     preview.outerHTML = `<span class="brand-mark" id="adminLogoPreview">${escapeHtml(settings.logoText || companyName().slice(0, 1).toUpperCase())}</span>`;
   }
+}
+
+function stopRemoteSync() {
+  if (remoteUnsubscribe) {
+    remoteUnsubscribe();
+    remoteUnsubscribe = null;
+  }
+  remoteDocRef = null;
+  remoteReady = false;
 }
 
 function toDateInput(date) {
@@ -1039,6 +1090,10 @@ function renderAll() {
   updatePaymentAlert();
   updateNavigationVisibility();
   fillSelects();
+  // Atualizar editor de landing se a página admin estiver visível
+  if (document.querySelector("#adminPage")?.classList.contains("active")) {
+    if (typeof renderLandingEditor === "function") renderLandingEditor();
+  }
 }
 
 function updateNavigationVisibility() {
@@ -1135,41 +1190,56 @@ function monthEvent(appointment) {
 }
 
 function renderRevenueChart() {
-  const periodValue = document.querySelector("#dashboardPeriod").value || "30";
+  const periodValue = document.querySelector("#dashboardPeriod").value || "currentMonth";
   const now = new Date();
-  const data = [];
   const dates = [];
 
   if (periodValue === "currentMonth") {
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const daysInMonth = now.getDate();
-    for (let i = 0; i < daysInMonth; i++) {
-      const date = new Date(monthStart);
-      date.setDate(monthStart.getDate() + i);
-      dates.push(date);
+    for (let i = 0; i < now.getDate(); i++) {
+      const d = new Date(monthStart);
+      d.setDate(monthStart.getDate() + i);
+      dates.push(d);
     }
   } else {
     const days = Number(periodValue);
     for (let i = days - 1; i >= 0; i--) {
-      const date = new Date(now);
-      date.setDate(now.getDate() - i);
-      dates.push(date);
+      const d = new Date(now);
+      d.setDate(now.getDate() - i);
+      dates.push(d);
     }
   }
 
-  dates.forEach((date) => {
+  const data = dates.map((date) => {
     const key = toDateInput(date);
-    const total = sum(state.financeiro.filter((f) => f.tipo === "entrada" && f.data === key));
-    data.push({ key, total });
+    return {
+      key,
+      label: key.slice(8),
+      income: sum(state.financeiro.filter((f) => f.tipo === "entrada" && f.data === key)),
+      expense: sum(state.financeiro.filter((f) => f.tipo === "saida" && f.data === key)),
+    };
   });
 
-  const max = Math.max(...data.map((d) => d.total), 1);
-  document.querySelector("#revenueChart").innerHTML = data
-    .map((d) => {
-      const height = Math.max(3, (d.total / max) * 100);
-      return `<div class="bar" title="${d.key}: ${money(d.total)}" style="height:${height}%"><small>${d.key.slice(8)}</small></div>`;
-    })
-    .join("");
+  const CHART_H = 200; // altura útil das barras em px
+  const max = Math.max(...data.map((d) => Math.max(d.income, d.expense)), 1);
+
+  const bars = data.map((d) => {
+    const incomeH = d.income > 0 ? Math.max(4, Math.round((d.income / max) * CHART_H)) : 0;
+    const expenseH = d.expense > 0 ? Math.max(4, Math.round((d.expense / max) * CHART_H)) : 0;
+    return `<div class="bar-group">
+      <div class="bar income" style="height:${incomeH}px" title="${d.key} — Entrada: ${money(d.income)}"></div>
+      <div class="bar expense" style="height:${expenseH}px" title="${d.key} — Saída: ${money(d.expense)}"></div>
+      <small>${d.label}</small>
+    </div>`;
+  }).join("");
+
+  document.querySelector("#revenueChart").innerHTML = `
+    <div class="chart-legend">
+      <span class="chart-legend-item income">Entradas</span>
+      <span class="chart-legend-item expense">Saídas</span>
+    </div>
+    <div class="chart-bars">${bars}</div>
+  `;
 }
 
 function renderServiceRanking() {
@@ -1260,7 +1330,7 @@ function appointmentCard(item) {
         <button class="ghost-button" data-payment-appointment="${item.id}">Pagamento</button>
         <button class="ghost-button" data-whatsapp-appointment="${item.id}">WhatsApp</button>
         <select data-status-appointment="${item.id}" aria-label="Alterar status">
-          ${["Agendado", "Confirmado", "Concluído", "Cancelado"].map((status) => `<option ${status === item.status ? "selected" : ""}>${status}</option>`).join("")}
+          ${APPOINTMENT_STATUSES.map((status) => `<option ${status === item.status ? "selected" : ""}>${status}</option>`).join("")}
         </select>
       </div>
     </article>
@@ -1881,6 +1951,7 @@ function savePaymentAndClose() {
 function updateAppointmentStatus(appointmentId, status) {
   const appointment = state.agendamentos.find((a) => a.id === appointmentId);
   if (!appointment) return;
+  const previousStatus = appointment.status;
   if (status === "Concluído" && appointment.usarPacote && appointment.pacoteId && packageAvailability(appointment.pacoteId, appointment.servicoCreditoPacoteId || appointment.tipoCreditoPacote, appointment.id) <= 0) {
     renderAppointments();
     toast(`Este pacote não tem crédito disponível de ${packageCreditLabel(appointment.servicoCreditoPacoteId || appointment.tipoCreditoPacote)}.`);
@@ -1898,9 +1969,12 @@ function updateAppointmentStatus(appointmentId, status) {
   save();
   renderAll();
   toast("Status atualizado.");
+  if (appointment.origemCliente && previousStatus === "Pendente confirmação" && status === "Confirmado") {
+    sendAppointmentWhatsapp(appointment.id, "confirmacao");
+  }
 }
 
-function sendAppointmentWhatsapp(appointmentId) {
+function sendAppointmentWhatsapp(appointmentId, mode = "comprovante") {
   const appointment = state.agendamentos.find((item) => item.id === appointmentId);
   if (!appointment) return;
   const phone = appointment.telefone.replace(/\D/g, "");
@@ -1914,21 +1988,36 @@ function sendAppointmentWhatsapp(appointmentId) {
   const paymentLabel = appointment.usarPacote
     ? `Pacote pré-pago - ${packageCreditLabel(appointment.servicoCreditoPacoteId || appointment.tipoCreditoPacote)}`
     : appointment.statusPagamento === "pago" ? "Pago" : "Pendente";
-  const message = [
-    `Olá, ${appointment.nomeCliente}!`,
-    "",
-    "Segue seu comprovante de agendamento:",
-    `Empresa: ${companyName()}`,
-    `Serviço: ${appointmentServiceName(appointment)}`,
-    `Data: ${start.toLocaleDateString("pt-BR")}`,
-    `Chegada: ${start.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })} com 15 minutos de tolerância para atraso`,
-    `Saída: ${end.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`,
-    `Valor: ${appointment.usarPacote ? "Pacote pré-pago" : money(appointment.valorFinal)}`,
-    `Pagamento: ${paymentLabel}`,
-    `Status: ${appointment.status}`,
-    "",
-    "Obrigada pela preferência!",
-  ].join("\n");
+  const message =
+    mode === "confirmacao"
+      ? [
+          `Olá, ${appointment.nomeCliente}!`,
+          "",
+          "Seu agendamento foi confirmado:",
+          `Empresa: ${companyName()}`,
+          `Serviço: ${appointmentServiceName(appointment)}`,
+          `Data: ${start.toLocaleDateString("pt-BR")}`,
+          `Chegada: ${start.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })} com 15 minutos de tolerância para atraso`,
+          `Saída: ${end.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`,
+          `Valor: ${appointment.usarPacote ? "Pacote pré-pago" : money(appointment.valorFinal)}`,
+          "",
+          "Obrigada pela preferência!",
+        ].join("\n")
+      : [
+          `Olá, ${appointment.nomeCliente}!`,
+          "",
+          "Segue seu comprovante de agendamento:",
+          `Empresa: ${companyName()}`,
+          `Serviço: ${appointmentServiceName(appointment)}`,
+          `Data: ${start.toLocaleDateString("pt-BR")}`,
+          `Chegada: ${start.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })} com 15 minutos de tolerância para atraso`,
+          `Saída: ${end.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`,
+          `Valor: ${appointment.usarPacote ? "Pacote pré-pago" : money(appointment.valorFinal)}`,
+          `Pagamento: ${paymentLabel}`,
+          `Status: ${appointment.status}`,
+          "",
+          "Obrigada pela preferência!",
+        ].join("\n");
   window.open(`https://wa.me/${whatsappPhone}?text=${encodeURIComponent(message)}`, "_blank", "noopener");
 }
 
@@ -1983,7 +2072,7 @@ function escapeHtml(value) {
 }
 
 function statusClass(status) {
-  return normalize(status).replace("í", "i");
+  return normalize(status).replace("í", "i").replace(/\s+/g, "-");
 }
 
 function isAppointmentLate(appointment) {
@@ -1992,6 +2081,7 @@ function isAppointmentLate(appointment) {
 
 function getStatusIcon(appointment) {
   if (appointment.status === "Cancelado") return "⚫";
+  if (appointment.status === "Pendente confirmação") return "🔵";
   if (isAppointmentLate(appointment)) return "🔴";
   if (appointment.statusPagamento === "pago") return "🟢";
   if (appointment.status === "Concluído" && appointment.statusPagamento === "pendente") return "🔴";
@@ -2022,9 +2112,10 @@ function updatePaymentAlert() {
   if (!alertDiv || !alertMessage) return;
   const alerts = state.agendamentos
     .filter((appointment) => {
+      const pendingConfirmation = appointment.status === "Pendente confirmação";
       const paymentPending = appointment.status === "Concluído" && appointment.statusPagamento === "pendente";
       const appointmentLate = isAppointmentLate(appointment);
-      return paymentPending || appointmentLate;
+      return pendingConfirmation || paymentPending || appointmentLate;
     })
     .sort((a, b) => a.dataHoraInicio.localeCompare(b.dataHoraInicio));
 
@@ -2036,9 +2127,11 @@ function updatePaymentAlert() {
 
   alertMessage.innerHTML = alerts
     .map((appointment) => {
-      const text = isAppointmentLate(appointment)
-        ? `⏰ ${appointment.nomeCliente} - agendamento atrasado (${parseDate(appointment.dataHoraInicio).toLocaleDateString("pt-BR")} ${parseDate(appointment.dataHoraInicio).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })})`
-        : `⚠️ ${appointment.nomeCliente} - pagamento pendente`;
+      const text = appointment.status === "Pendente confirmação"
+        ? `🔵 ${appointment.nomeCliente} - aguardando confirmação (${parseDate(appointment.dataHoraInicio).toLocaleDateString("pt-BR")} ${parseDate(appointment.dataHoraInicio).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })})`
+        : isAppointmentLate(appointment)
+          ? `⏰ ${appointment.nomeCliente} - agendamento atrasado (${parseDate(appointment.dataHoraInicio).toLocaleDateString("pt-BR")} ${parseDate(appointment.dataHoraInicio).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })})`
+          : `⚠️ ${appointment.nomeCliente} - pagamento pendente`;
       return `<button type="button" data-edit-appointment="${appointment.id}">${escapeHtml(text)}</button>`;
     })
     .join(`<span class="alert-separator">|</span>`);
@@ -2143,6 +2236,7 @@ function bindForms() {
 
   document.querySelector("#appointmentForm").addEventListener("submit", (event) => {
     event.preventDefault();
+    const sendWhatsappAfterSave = event.submitter?.id === "saveAppointmentWhatsapp";
     const appointmentId = document.querySelector("#appointmentId").value;
     const client = state.clientes.find((c) => c.id === document.querySelector("#appointmentClient").value);
     const service = state.servicos.find((s) => s.id === document.querySelector("#appointmentService").value);
@@ -2187,6 +2281,9 @@ function bindForms() {
       dataHoraFim: end,
       status: document.querySelector("#appointmentStatus").value,
       observacoes: document.querySelector("#appointmentNotes").value.trim(),
+      origemCliente: existing?.origemCliente || false,
+      clienteAuthUid: existing?.clienteAuthUid || "",
+      emailCliente: existing?.emailCliente || "",
       usarPacote,
       pacoteId: usarPacote ? pacoteId : "",
       servicoCreditoPacoteId: usarPacote ? servicoCreditoPacoteId : "",
@@ -2239,6 +2336,9 @@ function bindForms() {
     document.querySelector("#appointmentModal").close();
     renderAll();
     toast("Agendamento salvo.");
+    if (sendWhatsappAfterSave) {
+      sendAppointmentWhatsapp(savedAppointment.id, savedAppointment.status === "Confirmado" ? "confirmacao" : "comprovante");
+    }
   });
 
   document.querySelector("#financeForm").addEventListener("submit", (event) => {
@@ -2276,6 +2376,8 @@ function bindForms() {
     event.preventDefault();
     state.settings.companyName = document.querySelector("#settingCompanyName").value.trim() || DEFAULT_SETTINGS.companyName;
     state.settings.subtitle = document.querySelector("#settingSubtitle").value.trim() || DEFAULT_SETTINGS.subtitle;
+    state.settings.telefoneContato = (document.querySelector("#settingTelefoneContato")?.value || "").trim();
+    state.settings.instagram = (document.querySelector("#settingInstagram")?.value || "").trim();
     state.settings.logoText = document.querySelector("#settingLogoText").value.trim() || state.settings.companyName.slice(0, 1).toUpperCase();
     state.settings.colors.green = document.querySelector("#settingGreen").value;
     state.settings.colors.greenDark = document.querySelector("#settingGreenDark").value;
@@ -2337,6 +2439,7 @@ function bindForms() {
           permissions,
           updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
         });
+        await saveLoginAliases(username, name, email);
         if (password) {
           // Update password if provided
           const user = await firebase.auth().getUser(employeeId);
@@ -2354,6 +2457,7 @@ function bindForms() {
           createdAt: firebase.firestore.FieldValue.serverTimestamp(),
           updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
         });
+        await saveLoginAliases(username, name, email);
       }
 
       document.querySelector("#employeeForm").reset();
@@ -2517,6 +2621,7 @@ function bindButtons() {
   document.querySelector("#backupFile").addEventListener("change", importBackup);
   document.querySelector("#installApp").addEventListener("click", installApp);
   document.querySelector("#exportPdf").addEventListener("click", exportPdf);
+  document.querySelector("#logoutBtn")?.addEventListener("click", handleLogout);
   document.querySelector("#paymentMethod").addEventListener("input", updatePaymentPreview);
   document.querySelector("#paymentStatus").addEventListener("input", updatePaymentPreview);
   document.querySelector("#paymentDiscountType").addEventListener("input", updatePaymentPreview);
@@ -2653,6 +2758,7 @@ function exportBackup() {
       agendamentos: state.agendamentos,
       pacotes: state.pacotes,
       financeiro: state.financeiro,
+      landingContent: state.landingContent || {},
     },
   };
   download(`backup-${brandSlug()}-${toDateInput(new Date())}.json`, JSON.stringify(backup, null, 2), "application/json;charset=utf-8");
@@ -2684,6 +2790,7 @@ function importBackup(event) {
       state.agendamentos = data.agendamentos;
       state.pacotes = Array.isArray(data.pacotes) ? data.pacotes : [];
       state.financeiro = data.financeiro;
+      state.landingContent = data.landingContent || {};
       migrateState();
       recomputePackageUsage();
       state.agendamentos.forEach((appointment) => {
@@ -2742,3 +2849,204 @@ bindInputs();
 renderAll();
 initAuth(); // Changed from initRemoteSync()
 initRemoteSync();
+
+// ─────────────────────────────────────────────
+// LANDING CONTENT EDITOR
+// ─────────────────────────────────────────────
+
+const DEFAULT_LANDING_CONTENT = {
+  heroEyebrow: "Nail design, alongamento e cuidado",
+  heroTitle: "Rayssa Oliveira Nail Design",
+  heroDescription: "Unhas feitas com acabamento delicado, planejamento do formato e orientacao de cuidados para manter o resultado bonito por mais tempo.",
+  heroImage: "https://images.unsplash.com/photo-1604654894610-df63bc536371?auto=format&fit=crop&w=1300&q=85",
+  highlight1Title: "Atendimento personalizado",
+  highlight1Text: "Escolha de formato, tamanho, cor e acabamento conforme seu estilo.",
+  highlight2Title: "Procedimento orientado",
+  highlight2Text: "Preparacao, aplicacao e finalizacao com explicacao dos cuidados.",
+  highlight3Title: "Manutencao planejada",
+  highlight3Text: "Recomendacoes para preservar brilho, estrutura e durabilidade.",
+  servicesEyebrow: "Servicos realizados",
+  servicesTitle: "Procedimentos para diferentes estilos de unha",
+  service1Title: "Alongamento em gel",
+  service1Text: "Estrutura resistente, acabamento natural e formato definido para quem busca durabilidade.",
+  service2Title: "Banho de gel",
+  service2Text: "Camada de protecao para fortalecer a unha natural e manter o brilho da esmaltação.",
+  service3Title: "Blindagem",
+  service3Text: "Ideal para unhas fracas, com finalizacao fina e aspecto elegante no dia a dia.",
+  service4Title: "Manutencao",
+  service4Text: "Ajuste da estrutura, correcao do crescimento e renovacao do acabamento.",
+  splitEyebrow: "Como funciona",
+  splitTitle: "Do preparo a finalizacao, cada etapa protege o resultado",
+  splitText: "O procedimento comeca com avaliacao das unhas, higienizacao, preparo da superficie, escolha do formato, aplicacao do produto adequado e finalizacao com cor, brilho ou decoracao.",
+  splitImage: "https://images.unsplash.com/photo-1632345031435-8727f6897d53?auto=format&fit=crop&w=900&q=85",
+  portfolioEyebrow: "Portfolio",
+  portfolioTitle: "Acabamentos para inspirar sua proxima escolha",
+  feedTitle: "Acompanhe as novidades",
+  careEyebrow: "Dicas e cuidados",
+  careTitle: "Pequenos cuidados mantem suas unhas lindas por mais tempo",
+  care1Title: "Use luvas ao lidar com produtos de limpeza",
+  care1Text: "Quimicos fortes podem reduzir o brilho e comprometer a durabilidade do acabamento.",
+  care2Title: "Evite usar as unhas como ferramenta",
+  care2Text: "Abrir embalagens ou raspar superficies pode causar trincas e deslocamentos.",
+  care3Title: "Hidrate cuticulas diariamente",
+  care3Text: "Oleos e hidratantes ajudam a manter a pele ao redor das unhas com aspecto saudavel.",
+  care4Title: "Respeite o prazo de manutencao",
+  care4Text: "O retorno no periodo indicado preserva a estrutura e deixa o resultado sempre alinhado.",
+  portfolioPhotos: [
+    { url: "https://images.unsplash.com/photo-1599206676335-193c82b13c9e?auto=format&fit=crop&w=700&q=85", caption: "Delicado e natural" },
+    { url: "https://images.unsplash.com/photo-1610992015732-2449b76344bc?auto=format&fit=crop&w=700&q=85", caption: "Cor e brilho" },
+    { url: "https://images.unsplash.com/photo-1519014816548-bf5fe059798b?auto=format&fit=crop&w=700&q=85", caption: "Classico elegante" },
+  ],
+  feedPosts: [],
+};
+
+// Campos simples do editor de landing
+const LANDING_TEXT_FIELDS = [
+  "heroEyebrow","heroTitle","heroDescription","heroImage",
+  "highlight1Title","highlight1Text","highlight2Title","highlight2Text","highlight3Title","highlight3Text",
+  "servicesEyebrow","servicesTitle",
+  "service1Title","service1Text","service2Title","service2Text","service3Title","service3Text","service4Title","service4Text",
+  "splitEyebrow","splitTitle","splitText","splitImage",
+  "portfolioEyebrow","portfolioTitle","feedTitle",
+  "careEyebrow","careTitle",
+  "care1Title","care1Text","care2Title","care2Text","care3Title","care3Text","care4Title","care4Text",
+];
+
+function getLandingContent() {
+  return { ...DEFAULT_LANDING_CONTENT, ...(state.landingContent || {}) };
+}
+
+function renderLandingEditor() {
+  const content = getLandingContent();
+
+  // Preencher campos de texto
+  LANDING_TEXT_FIELDS.forEach((key) => {
+    const el = document.querySelector(`#lc_${key}`);
+    if (el) el.value = content[key] || "";
+  });
+
+  // Renderizar fotos do portfolio
+  renderPortfolioPhotosEditor(content.portfolioPhotos || []);
+
+  // Renderizar posts do feed
+  renderFeedPostsEditor(content.feedPosts || []);
+}
+
+function renderPortfolioPhotosEditor(photos) {
+  const container = document.querySelector("#portfolioPhotosEditor");
+  if (!container) return;
+  container.innerHTML = photos.map((photo, i) => `
+    <div class="photo-editor-row" data-photo-index="${i}">
+      <label>URL da imagem<input class="photo-url-input" value="${escapeHtml(photo.url || "")}" placeholder="https://..." /></label>
+      <label>Legenda<input class="photo-caption-input" value="${escapeHtml(photo.caption || "")}" /></label>
+      <button class="remove-photo-btn" data-remove-photo="${i}" type="button">Remover</button>
+    </div>
+  `).join("") || `<div class="muted" style="padding:12px">Nenhuma foto. Clique em "+ Adicionar foto".</div>`;
+
+  container.querySelectorAll("[data-remove-photo]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const content = getLandingContent();
+      const photos = [...(content.portfolioPhotos || [])];
+      photos.splice(Number(btn.dataset.removePhoto), 1);
+      state.landingContent = { ...content, portfolioPhotos: photos };
+      renderPortfolioPhotosEditor(photos);
+    });
+  });
+}
+
+function renderFeedPostsEditor(posts) {
+  const container = document.querySelector("#feedPostsEditor");
+  if (!container) return;
+  container.innerHTML = posts.map((post, i) => `
+    <div class="feed-post-editor-row" data-post-index="${i}">
+      <div class="feed-post-editor-fields">
+        <label>URL da imagem<input class="fp-image-input" value="${escapeHtml(post.imageUrl || "")}" placeholder="https://..." /></label>
+        <label>Legenda / descrição<textarea class="fp-caption-input" rows="2">${escapeHtml(post.caption || "")}</textarea></label>
+      </div>
+      <button class="remove-post-btn" data-remove-post="${i}" type="button">Remover</button>
+    </div>
+  `).join("") || `<div class="muted" style="padding:12px">Nenhuma publicação. Clique em "+ Nova publicação".</div>`;
+
+  container.querySelectorAll("[data-remove-post]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const content = getLandingContent();
+      const posts = [...(content.feedPosts || [])];
+      posts.splice(Number(btn.dataset.removePost), 1);
+      state.landingContent = { ...content, feedPosts: posts };
+      renderFeedPostsEditor(posts);
+    });
+  });
+}
+
+function readLandingEditorValues() {
+  const content = getLandingContent();
+
+  // Campos de texto
+  LANDING_TEXT_FIELDS.forEach((key) => {
+    const el = document.querySelector(`#lc_${key}`);
+    if (el) content[key] = el.value.trim();
+  });
+
+  // Fotos do portfolio
+  const photoRows = document.querySelectorAll(".photo-editor-row");
+  content.portfolioPhotos = Array.from(photoRows).map((row) => ({
+    url: row.querySelector(".photo-url-input")?.value.trim() || "",
+    caption: row.querySelector(".photo-caption-input")?.value.trim() || "",
+  })).filter((p) => p.url);
+
+  // Posts do feed
+  const postRows = document.querySelectorAll(".feed-post-editor-row");
+  const existingPosts = getLandingContent().feedPosts || [];
+  content.feedPosts = Array.from(postRows).map((row, i) => {
+    const existing = existingPosts[i] || {};
+    return {
+      id: existing.id || (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${i}`),
+      imageUrl: row.querySelector(".fp-image-input")?.value.trim() || "",
+      caption: row.querySelector(".fp-caption-input")?.value.trim() || "",
+      createdAt: existing.createdAt || new Date().toISOString(),
+      comments: existing.comments || [],
+    };
+  }).filter((p) => p.imageUrl);
+
+  return content;
+}
+
+async function saveLandingContent() {
+  const content = readLandingEditorValues();
+  state.landingContent = content;
+  save();
+  toast("Site atualizado com sucesso.");
+}
+
+// Bind landing editor buttons
+document.querySelector("#saveLandingContent")?.addEventListener("click", saveLandingContent);
+
+document.querySelector("#addPortfolioPhoto")?.addEventListener("click", () => {
+  const content = getLandingContent();
+  const photos = [...(content.portfolioPhotos || []), { url: "", caption: "" }];
+  state.landingContent = { ...content, portfolioPhotos: photos };
+  renderPortfolioPhotosEditor(photos);
+});
+
+document.querySelector("#addFeedPost")?.addEventListener("click", () => {
+  const content = getLandingContent();
+  const posts = [...(content.feedPosts || []), {
+    id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}`,
+    imageUrl: "",
+    caption: "",
+    createdAt: new Date().toISOString(),
+    comments: [],
+  }];
+  state.landingContent = { ...content, feedPosts: posts };
+  renderFeedPostsEditor(posts);
+});
+
+// Render landing editor when admin page is shown
+const originalSetPage = setPage;
+// Patch setPage to render landing editor when admin page opens
+document.querySelectorAll("[data-page='admin']").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    setTimeout(renderLandingEditor, 50);
+  });
+});
+
